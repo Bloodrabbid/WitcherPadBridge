@@ -53,7 +53,7 @@ wxp_cfg_write = cfg_write
 
 -- One slider or checkbox. `map` converts the integer the slider carries into the value the bridge
 -- expects (the engine only offers integer steps, so deadzones and curves are stored scaled).
-local function define(class_name, key, label_en, label_ru, kind, lo, hi, default, map)
+local function define(class_name, key, label_en, label_ru, kind, lo, hi, default, map, names)
   local base = CCheckBoxSetting
   if kind == "range" then base = CContinousSetting end
   local C = makeClass(base)
@@ -64,7 +64,17 @@ local function define(class_name, key, label_en, label_ru, kind, lo, hi, default
   function C:GetDefaultValue() return default end
   if kind == "range" then
     function C:GetRange(pHWCaps) return lo, hi end
-    function C:GetValueName(fValue) return tostring(fValue) end
+    -- `names` turns a short slider into a choice: the engine only offers integer steps, and a
+    -- three-step slider that reads "off / on attack / on button" is a perfectly good picker.
+    if names then
+      function C:GetValueName(fValue)
+        local n = names[fValue + 1]
+        if n then return L(n[1], n[2]) end
+        return tostring(fValue)
+      end
+    else
+      function C:GetValueName(fValue) return tostring(fValue) end
+    end
   end
   function C:ApplyChanges(pHWCaps)
     self:ApplyChangesInternal()
@@ -101,6 +111,17 @@ local ok, err = pcall(function()
          "Gamepad: right stick deadzone", "Геймпад: мёртвая зона правого стика", "range", 5, 40, 16, hundredths)
   define("WxpGamepadMenuSens", "MenuSensitivity",
          "Gamepad: menu cursor speed", "Геймпад: скорость курсора в меню", "range", 2, 30, 7, hundreds)
+
+  -- The assist turns the camera for you, and doing that unasked is unpleasant however well it
+  -- aims -- so the trigger is a setting, with a mode where it only ever moves the view while a
+  -- button is held. Which button is AimButton in gamepad.ini; R3 by default.
+  define("WxpGamepadAim", "AimAssist",
+         "Gamepad: aim assist", "Геймпад: автонаведение", "range", 0, 2, 1, nil,
+         { { "off",        "выкл" },
+           { "on attack",  "при атаке" },
+           { "on button",  "по кнопке" } })
+  define("WxpGamepadAimSpeed", "AimSpeed",
+         "Gamepad: aim assist speed", "Геймпад: скорость автонаведения", "range", 6, 36, 22, hundreds)
 
   cfg_write()
   log("registered " .. table.getn(wxp_settings) .. " settings")

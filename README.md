@@ -89,7 +89,28 @@ SensitivityY     = 900
 CameraCurve      = 1.7    ; 1.0 — линейно, больше — точнее у центра
 InvertY          = 0
 MenuSensitivity  = 700    ; скорость курсора в главном меню
+
+AimAssist        = 1      ; 0 выкл · 1 при атаке · 2 по кнопке
+AimButton        = r3     ; кнопка для режима 2: r3 l3 lb rb lt rt
+AimSpeed         = 2200   ; как быстро доворачивается камера, px/с
+LogLevel         = 1      ; 0 тишина · 1 обычный лог · 2 подробный
 ```
+
+Те же настройки есть **внутри игры**: Настройки → Игра, внизу списка блок «Геймпад».
+
+### Автонаведение
+
+Удар в этой игре достаётся тому, кто под прицелом, а прицел — центр экрана, поэтому «навести»
+здесь означает «довернуть камеру». Мост доворачивает её только пока его просят и пока правый
+стик не трогают: игрок всегда главнее.
+
+* `AimAssist = 1` — доворот, пока зажата кнопка удара. Так и было раньше.
+* `AimAssist = 2` — доворот **только пока держишь `AimButton`** (по умолчанию R3). Ничего не
+  двигается, пока вы сами этого не попросите. В этом режиме кнопка теряет своё обычное
+  действие (R3 — переворот камеры).
+* `AimAssist = 0` — камеру не трогает вообще.
+
+Если камера мотается из стороны в сторону — уменьшите `AimSpeed` или переключитесь на режим 2.
 
 ## Steam и проверка целостности
 
@@ -159,8 +180,16 @@ and a default `gamepad.ini` into the game root. No injector and no patched execu
 tries to load that DLL on every start by itself. Turn **Steam Input off** for the game — the mod
 reads the pad through XInput itself.
 
-**Settings:** `gamepad.ini`, re-read live. Deadzones, camera speed in pixels per second, response
-curve, Y inversion, menu cursor speed.
+**Settings:** `gamepad.ini`, re-read live, and the same values in-game under Options -> Gameplay.
+Deadzones, camera speed in pixels per second, response curve, Y inversion, menu cursor speed.
+
+**Aim assist:** a blow in this game lands on whoever is under the reticle, and the reticle is
+pinned to the centre of the screen -- so aiming here means turning the camera, and that is what
+the assist does, only while asked and only while the right stick is left alone. `AimAssist = 1`
+turns the view while the attack button is held (the old behaviour); `AimAssist = 2` turns it
+only while `AimButton` is held (R3 by default, which gives up its camera flip in that mode);
+`AimAssist = 0` never touches the camera. If the view swings about, lower `AimSpeed` or switch
+to mode 2.
 
 **Caveat:** the mod is all added files plus **one modified stock file**, `System/Scripts/debug.luc`
 — the only script the engine loads unconditionally, which is why it is the entry point. On macOS

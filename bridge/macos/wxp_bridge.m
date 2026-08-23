@@ -307,13 +307,20 @@ typedef struct {
     float curve;             /* camera response exponent   */
     int   invert_y;
     int   enabled;
-    int   aim;               /* soft aim assist while the attack button is held */
+    int   aim;               /* 0 off, 1 while the attack button is held, 2 while aim_btn is */
+    int   aim_btn;           /* which button mode 2 listens to; see AIM_BTN_* */
     float aim_speed;         /* how fast the assist may turn the camera, px per second */
 } Cfg;
+
+/* Mode 2 exists because the assist turning the camera by itself, unasked, is unpleasant even
+   when it aims correctly -- so there is a mode where it only ever moves the view while the
+   player is holding a button and asking for it. */
+enum { AIM_BTN_R3 = 0, AIM_BTN_L3, AIM_BTN_LB, AIM_BTN_RB, AIM_BTN_LT, AIM_BTN_RT };
+static const char* const AIM_BTN_NAMES[] = { "r3", "l3", "lb", "rb", "lt", "rt" };
 /* One initialiser, used twice: the live config and the copy to fall back on. */
 #define WXP_CFG_DEFAULTS { .dz_l=0.20f, .dz_r=0.18f, .sens_x=1400.f, .sens_y=900.f, \
                            .menu_sens=700.f, .curve=1.7f, .invert_y=0, .enabled=1, \
-                           .aim=1, .aim_speed=2200.f }
+                           .aim=1, .aim_btn=AIM_BTN_R3, .aim_speed=2200.f }
 static const Cfg g_cfg_defaults = WXP_CFG_DEFAULTS;
 static Cfg       g_cfg          = WXP_CFG_DEFAULTS;
 static char g_cfg_path[1024];      /* gamepad.ini in the write dir, edited by hand */
@@ -326,7 +333,14 @@ static void cfg_parse(const char* path) {
     FILE* f = fopen(path, "r"); if (!f) return;
     char line[256];
     while (fgets(line, sizeof(line), f)) {
-        char k[64]; float v;
+        char k[64], w[32]; float v;
+        /* AimButton is the one key whose value is a word. Try that first: "r3" would otherwise
+           be read as a number by nobody, but the numeric branch would simply drop the line. */
+        if (sscanf(line, " %63[^= ] = %31s", k, w) == 2 && !strcasecmp(k, "AimButton")) {
+            for (int i = 0; i < (int)(sizeof AIM_BTN_NAMES / sizeof *AIM_BTN_NAMES); i++)
+                if (!strcasecmp(w, AIM_BTN_NAMES[i])) { g_cfg.aim_btn = i; break; }
+            continue;
+        }
         if (sscanf(line, " %63[^= ] = %f", k, &v) == 2) {
             if      (!strcasecmp(k,"DeadzoneLeft"))  g_cfg.dz_l   = v;
             else if (!strcasecmp(k,"DeadzoneRight")) g_cfg.dz_r   = v;
@@ -362,7 +376,9 @@ static void cfg_load(void) {
     L("config reloaded: dzL=%.2f dzR=%.2f sens=%.1f/%.1f curve=%.2f invY=%d en=%d",
       g_cfg.dz_l, g_cfg.dz_r, g_cfg.sens_x, g_cfg.sens_y, g_cfg.curve, g_cfg.invert_y, g_cfg.enabled);
     L("           menu sensitivity=%.0f  (in-game tab: %s)", g_cfg.menu_sens, has_b ? "yes" : "no");
-    L("           aim assist=%d speed=%.0f px/s  log level=%d", g_cfg.aim, g_cfg.aim_speed, g_log_level);
+    L("           aim assist=%d (%s) speed=%.0f px/s  log level=%d", g_cfg.aim,
+      g_cfg.aim == 0 ? "off" : (g_cfg.aim == 2 ? AIM_BTN_NAMES[g_cfg.aim_btn] : "on attack"),
+      g_cfg.aim_speed, g_log_level);
 }
 
 /* --------------------------------------------------------- environment dump
@@ -730,7 +746,8 @@ static void* worker(void* unused) {
                     int ui = in_ui || in_menu;
                     float sx = ui ? g_cfg.menu_sens : g_cfg.sens_x;
                     float sy = ui ? g_cfg.menu_sens : g_cfg.sens_y;
-                    if (in_ui || (g.leftShoulder.pressed && !in_menu)) {
+                    if (in_ui || (g.leftShoulder.pressed && !in_menu
+                                  && !(g_cfg.aim == 2 && g_cfg.aim_btn == AIM_BTN_LB))) {
                         acc_x = acc_y = 0;      /* the focus layer or the sign wheel owns it */
                     } else {
                         acc_x += (double)rx * sx * dt;
@@ -742,6 +759,22 @@ static void* worker(void* unused) {
 
                 int attack_btn = g.buttonA.pressed || g_test_attack > 0;
 
+                /* Which physical button mode 2 watches, and whether the assist may move the
+                   camera at all this frame. In mode 2 that button stops doing its usual job --
+                   the assist is a hold, and a hold that also fires an action every time would
+                   be worse than the problem it solves. */
+                int aim_hold = 0;
+                switch (g_cfg.aim_btn) {
+                    case AIM_BTN_L3: aim_hold = g.leftThumbstickButton.pressed;  break;
+                    case AIM_BTN_LB: aim_hold = g.leftShoulder.pressed;          break;
+                    case AIM_BTN_RB: aim_hold = g.rightShoulder.pressed;         break;
+                    case AIM_BTN_LT: aim_hold = g.leftTrigger.value  > 0.4f;     break;
+                    case AIM_BTN_RT: aim_hold = g.rightTrigger.value > 0.4f;     break;
+                    default:         aim_hold = g.rightThumbstickButton.pressed; break;
+                }
+                int aim_mode2 = (g_cfg.aim == 2);
+                int aim_active = (g_cfg.aim == 1 && attack_btn) || (aim_mode2 && aim_hold);
+
                 /* Buttons. In a panel the same physical buttons mean confirm/back/section, so
                    they are routed to the Lua focus layer instead of the gameplay bindings. */
                 {
@@ -749,6 +782,14 @@ static void* worker(void* unused) {
                     int lb = g.leftShoulder.pressed, rb = g.rightShoulder.pressed;
                     int lt = g.leftTrigger.value  > 0.4f;
                     int rt = g.rightTrigger.value > 0.4f;
+                    /* Whatever mode 2 has claimed is the aim button and nothing else, so a
+                       press does not also swing a sword or flip the camera. */
+                    if (aim_mode2) {
+                        if (g_cfg.aim_btn == AIM_BTN_LB) lb = 0;
+                        if (g_cfg.aim_btn == AIM_BTN_RB) rb = 0;
+                        if (g_cfg.aim_btn == AIM_BTN_LT) lt = 0;
+                        if (g_cfg.aim_btn == AIM_BTN_RT) rt = 0;
+                    }
                     static int p_a, p_b, p_lb, p_rb, p_lt, p_rt;
 
                     if (in_ui) {
@@ -775,8 +816,10 @@ static void* worker(void* unused) {
                         if (rb) want[MK_E] = 1;                  /* silver sword       */
                         if (lt) want[MK_X] = 1;                  /* fast style         */
                         if (rt) want[MK_Z] = 1;                  /* strong style       */
-                        if (g.leftThumbstickButton.pressed)  want[MK_C] = 1;  /* group style  */
-                        if (g.rightThumbstickButton.pressed) want[MK_F] = 1;  /* flip camera  */
+                        if (g.leftThumbstickButton.pressed  && !(aim_mode2 && g_cfg.aim_btn == AIM_BTN_L3))
+                            want[MK_C] = 1;                                   /* group style  */
+                        if (g.rightThumbstickButton.pressed && !(aim_mode2 && g_cfg.aim_btn == AIM_BTN_R3))
+                            want[MK_F] = 1;                                   /* flip camera  */
 
                         /* Sign wheel. Every combat binding here is a one-shot toggle, so
                            holding LB costs nothing and buys the five signs a home: flick the
@@ -818,7 +861,7 @@ static void* worker(void* unused) {
                    snapped: a jump cut would read as the game grabbing the camera, and the
                    residual is recomputed every frame anyway, so a ramp converges just as fast.
                    Sub-pixel remainder is carried, same as the stick. */
-                if (g_cfg.aim && !in_ui && !in_menu && attack_btn
+                if (g_cfg.aim && !in_ui && !in_menu && aim_active
                     && fabsf(rx) < 0.25f && fabsf(ry) < 0.25f
                     && (time(NULL) - g_aim_fresh) < 2) {
                     static double rem_x = 0, rem_y = 0;
@@ -846,7 +889,10 @@ static void* worker(void* unused) {
                     if (!attacking) aim_wait = 0;
                     else {
                         if (!p_attack) aim_wait = 0;
-                        if (g_cfg.aim && !g_aim_ready && (time(NULL) - g_aim_fresh) < 2
+                        /* Only while the assist is actually engaged: in mode 2 an attack with
+                           no aim button held is the player's own, and delaying it would be the
+                           assist interfering exactly where it was told not to. */
+                        if (aim_active && !g_aim_ready && (time(NULL) - g_aim_fresh) < 2
                             && aim_wait < 0.35) { aim_wait += dt; lmb = 0; }
                     }
                     p_attack = attacking;

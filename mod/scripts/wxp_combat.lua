@@ -59,6 +59,16 @@ C.aim_hunt    = nil   -- when the geometry says "aimed" but the reticle disagree
 C.aim_hunt_i  = 0
 C.aim_hunt_net = 0    -- how far the search has pushed the view, so it can put it back
 C.aim_hunt_for = nil  -- the target the current search belongs to
+-- Close enough. The reticle is about 85 px of mouse wide, so a residual smaller than this is
+-- already on the target and spending it only produces a permanent micro-jitter that reads as
+-- the camera never settling.
+C.aim_dead    = 30
+-- How long a chosen target is kept before the creature under the reticle may take its place.
+-- Without this the assist and the retarget rule feed each other: turning toward A sweeps B
+-- under the reticle, retargeting to B turns the view back across A, and the camera swings left
+-- and right for as long as the fight lasts.
+C.retarget_hold = 0.8
+C.target_since  = 0
 -- Pitch is deliberately not solved. g_CameraGob is not the eye: as the view swings from sky to
 -- ground its angle above Geralt stays at 45 degrees and only its distance changes, so the
 -- elevation of the look axis simply is not in anything Lua can read. An unlearned guess at it
@@ -185,6 +195,9 @@ local NO_OBJECT = 0
 
 function C.set(c)
   if c ~= nil and not registered(c) then return false end
+  -- Only when it is a different creature: tick() re-pins the same target every frame to keep
+  -- the engine's selection ring on it, and stamping that would make the hold below expire never.
+  if not rawequal(c, C.target) then C.target_since = os.clock() end
   C.target = c
   local id = NO_OBJECT
   if c ~= nil then
@@ -307,13 +320,18 @@ function C.aim_solve()
     return 0, 0, true
   end
   local tx, ty = clamp(gx + C.aim_offset, -600, 600), 0
+  -- Inside the reticle already: stop asking the bridge to turn. A target in melee never stands
+  -- still, so without this the residual flickers around zero and the camera hunts forever.
+  if math.abs(tx) < C.aim_dead then tx = 0 end
   -- Yaw says we are on it and the engine says we are not, so what is left is height: the target
   -- is up a stair, or taller or shorter than the guess baked into the learned offset. Nudge the
   -- view up and down over the target, then come back to where it started -- four steps, bounded,
   -- and it stops the moment the reticle answers.
-  if math.abs(tx) < 25 and rawequal(C.aim_hunt_for, t) then
+  if math.abs(tx) < C.aim_dead and rawequal(C.aim_hunt_for, t) then
     if C.aim_hunt == nil then C.aim_hunt = os.clock() C.aim_hunt_i = 0 C.aim_hunt_net = 0 end
-    local n = math.floor((os.clock() - C.aim_hunt - 0.3) / 0.16)
+    -- Wait longer before starting: the vertical sweep is the part that actually makes people
+    -- queasy, and most of the time yaw alone gets there a fraction of a second later anyway.
+    local n = math.floor((os.clock() - C.aim_hunt - 0.6) / 0.16)
     if n >= C.aim_hunt_i and C.aim_hunt_i < 4 then
       C.aim_hunt_i = C.aim_hunt_i + 1
       ty = HUNT_Y[C.aim_hunt_i]
@@ -395,7 +413,12 @@ function C.tick()
   if fighting then
     local mo = C.under_reticle()
     if mo ~= nil and C.enemies[mo] ~= nil and not rawequal(mo, C.target) and alive(mo) then
-      C.set(mo)
+      -- but not the instant it appears: while the assist is turning, whoever the view sweeps
+      -- past crosses the reticle too, and taking that as the player's choice is what makes the
+      -- camera swing back and forth between two bandits.
+      if C.target == nil or (os.clock() - (C.target_since or 0)) > C.retarget_hold then
+        C.set(mo)
+      end
     end
   end
   if C.target == nil and fighting then C.acquire() end
