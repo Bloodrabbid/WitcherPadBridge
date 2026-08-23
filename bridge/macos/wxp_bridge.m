@@ -140,6 +140,10 @@ static void tap_key(int kvk);
 static int g_tap[256];
 static void tap_key(int kvk) { if (kvk >= 0 && kvk < 256) g_tap[kvk] = 12; }   /* ~48 ms */
 
+/* Test aid: "a <ms>" on the command channel holds the attack button down, so the whole
+   pad -> aim assist -> swing path can be exercised with nobody's hand on the controller. */
+static int g_test_attack;
+
 static int g_wheel_sect = -1;   /* sector the sign wheel is showing, -1 = closed */
 static int g_wheel_used;        /* a sign was picked during this LB hold */
 
@@ -150,6 +154,41 @@ static void nav_send(const char* intent) {
     fprintf(f, "%u %s\n", ++g_nav_seq, intent);
     fclose(f);
     L("nav: %u %s", g_nav_seq, intent);
+}
+
+/* Aim assist. An attack in this engine lands on whoever is under the reticle -- the engine's
+   attack lock only drives the selection ring, verified in a live fight -- and the reticle is
+   pinned to the centre of the screen, so aiming *is* turning the camera. Only Lua can say where
+   the target sits: it knows the world positions and the engine tells it, every frame, which
+   creature is under the reticle. So Lua does the seeing and writes the residual turn here, in
+   the same pixels the camera already speaks; the bridge decides when to spend it.
+
+   The value is an absolute residual, not an increment: a fresh line replaces whatever is left
+   over. Lua recomputes it from the camera that has already moved, which makes this a closed
+   loop rather than a dead-reckoned nudge. */
+static char     g_aim_path[1024];
+static uint32_t g_aim_seq;
+static double   g_aim_px, g_aim_py;
+static int      g_aim_ready;      /* Lua says the reticle is on the target right now */
+static time_t   g_aim_fresh;
+
+static void poll_aim(void) {
+    if (!g_aim_path[0]) return;
+    FILE* f = fopen(g_aim_path, "r");
+    if (!f) return;
+    unsigned seq = 0; double ax = 0, ay = 0; int ready = 0;
+    int n = fscanf(f, "%u %lf %lf %d", &seq, &ax, &ay, &ready);
+    fclose(f);
+    if (n < 3 || seq == g_aim_seq) return;
+    g_aim_seq   = seq;
+    /* dx is an absolute residual -- Lua recomputes it from the camera that has already turned,
+       so replacing is what keeps the pair a closed loop. dy has no feedback: the engine hands
+       Lua no way to read the camera's pitch, so there it sends bounded nudges and they have to
+       add up rather than overwrite each other. */
+    g_aim_px    = ax;
+    g_aim_py   += ay;
+    g_aim_ready = (n >= 4) ? ready : 1;
+    g_aim_fresh = time(NULL);
 }
 
 static void poll_lua_state(void) {
@@ -228,8 +267,10 @@ typedef struct {
     float curve;             /* camera response exponent   */
     int   invert_y;
     int   enabled;
+    int   aim;               /* soft aim assist while the attack button is held */
+    float aim_speed;         /* how fast the assist may turn the camera, px per second */
 } Cfg;
-static Cfg g_cfg = { .dz_l=0.20f, .dz_r=0.18f, .sens_x=1400.f, .sens_y=900.f, .menu_sens=700.f, .curve=1.7f, .invert_y=0, .enabled=1 };
+static Cfg g_cfg = { .dz_l=0.20f, .dz_r=0.18f, .sens_x=1400.f, .sens_y=900.f, .menu_sens=700.f, .curve=1.7f, .invert_y=0, .enabled=1, .aim=1, .aim_speed=2200.f };
 static char g_cfg_path[1024];      /* gamepad.ini in the write dir, edited by hand */
 static char g_cfg2_path[1024];     /* wxp_config.ini next to the game's scripts, written by
                                       the in-game Gamepad settings tab. Lua cannot reach the
@@ -250,6 +291,8 @@ static void cfg_parse(const char* path) {
             else if (!strcasecmp(k,"CameraCurve"))   g_cfg.curve  = v;
             else if (!strcasecmp(k,"InvertY"))       g_cfg.invert_y = (int)v;
             else if (!strcasecmp(k,"Enabled"))       g_cfg.enabled  = (int)v;
+            else if (!strcasecmp(k,"AimAssist"))     g_cfg.aim      = (int)v;
+            else if (!strcasecmp(k,"AimSpeed"))      g_cfg.aim_speed = v;
         }
     }
     fclose(f);
@@ -269,6 +312,7 @@ static void cfg_load(void) {
     L("config reloaded: dzL=%.2f dzR=%.2f sens=%.1f/%.1f curve=%.2f invY=%d en=%d",
       g_cfg.dz_l, g_cfg.dz_r, g_cfg.sens_x, g_cfg.sens_y, g_cfg.curve, g_cfg.invert_y, g_cfg.enabled);
     L("           menu sensitivity=%.0f  (in-game tab: %s)", g_cfg.menu_sens, has_b ? "yes" : "no");
+    L("           aim assist=%d speed=%.0f px/s", g_cfg.aim, g_cfg.aim_speed);
 }
 
 /* ------------------------------------------------------------- injection I/O */
@@ -510,10 +554,12 @@ static void* worker(void* unused) {
                 snprintf(g_state_path, sizeof(g_state_path), "%s/System/wxp_state.ini", p);
                 snprintf(g_nav_path,   sizeof(g_nav_path),   "%s/System/wxp_nav.txt",   p);
                 snprintf(g_cfg2_path,  sizeof(g_cfg2_path),  "%s/System/wxp_config.ini", p);
+                snprintf(g_aim_path,   sizeof(g_aim_path),   "%s/System/wxp_aim.txt",   p);
             } else {
                 snprintf(g_state_path, sizeof(g_state_path), "wxp_state.ini");
                 snprintf(g_nav_path,   sizeof(g_nav_path),   "wxp_nav.txt");
                 snprintf(g_cfg2_path,  sizeof(g_cfg2_path),  "wxp_config.ini");
+                snprintf(g_aim_path,   sizeof(g_aim_path),   "wxp_aim.txt");
             }
             struct stat st;
             L("lua state path: %s (%s)", g_state_path,
@@ -587,10 +633,12 @@ static void* worker(void* unused) {
                     }
                 }
 
+                int attack_btn = g.buttonA.pressed || g_test_attack > 0;
+
                 /* Buttons. In a panel the same physical buttons mean confirm/back/section, so
                    they are routed to the Lua focus layer instead of the gameplay bindings. */
                 {
-                    int a  = g.buttonA.pressed,  b  = g.buttonB.pressed;
+                    int a  = attack_btn,  b  = g.buttonB.pressed;
                     int lb = g.leftShoulder.pressed, rb = g.rightShoulder.pressed;
                     int lt = g.leftTrigger.value  > 0.4f;
                     int rt = g.rightTrigger.value > 0.4f;
@@ -658,6 +706,45 @@ static void* worker(void* unused) {
                     p_a = a; p_b = b; p_lb = lb; p_rb = rb; p_lt = lt; p_rt = rt;
                 }
 
+                /* Spend the residual Lua published, but only while the player is asking to
+                   attack and is not steering the camera themselves. Rate-limited rather than
+                   snapped: a jump cut would read as the game grabbing the camera, and the
+                   residual is recomputed every frame anyway, so a ramp converges just as fast.
+                   Sub-pixel remainder is carried, same as the stick. */
+                if (g_cfg.aim && !in_ui && !in_menu && attack_btn
+                    && fabsf(rx) < 0.25f && fabsf(ry) < 0.25f
+                    && (time(NULL) - g_aim_fresh) < 2) {
+                    static double rem_x = 0, rem_y = 0;
+                    double budget = (double)g_cfg.aim_speed * dt;
+                    double stepx = g_aim_px, stepy = g_aim_py;
+                    double mag = sqrt(stepx * stepx + stepy * stepy);
+                    if (mag > budget && mag > 0.0001) { stepx *= budget / mag; stepy *= budget / mag; }
+                    g_aim_px -= stepx; g_aim_py -= stepy;
+                    rem_x += stepx; rem_y += stepy;
+                    int ix = (int)rem_x, iy = (int)rem_y;
+                    rem_x -= ix; rem_y -= iy;
+                    dx += ix; dy += iy;
+                } else {
+                    g_aim_px = g_aim_py = 0;
+                }
+
+                /* A swing sent a frame too early is a swing at empty air -- exactly what the
+                   assist exists to prevent -- so hold the press until Lua reports the reticle
+                   has arrived. Bounded: a target that cannot be acquired must still not cost
+                   the player the ability to attack. */
+                {
+                    static int    p_attack = 0;
+                    static double aim_wait = 0;
+                    int attacking = lmb && !in_ui && !in_menu;
+                    if (!attacking) aim_wait = 0;
+                    else {
+                        if (!p_attack) aim_wait = 0;
+                        if (g_cfg.aim && !g_aim_ready && (time(NULL) - g_aim_fresh) < 2
+                            && aim_wait < 0.35) { aim_wait += dt; lmb = 0; }
+                    }
+                    p_attack = attacking;
+                }
+
                 /* Direction input: panels in gameplay, focus steps inside a panel. The stick
                    doubles for the dpad in UI so either one navigates, and both auto-repeat
                    after a hold so long lists are not a hundred taps. */
@@ -721,7 +808,14 @@ static void* worker(void* unused) {
                        can be exercised without a controller in the room. */
                     char intent[32] = {0};
                     int handled = 0;
-                    if (sscanf(line, " n %31s", intent) == 1) {
+                    {   int ms = 0;
+                        if (sscanf(line, " a %d", &ms) == 1) {
+                            g_test_attack = (ms > 0 ? ms : 200) / 4;   /* loop runs at ~250 Hz */
+                            L(">>> TEST attack held for %d ms", ms > 0 ? ms : 200);
+                            handled = 1;
+                        }
+                    }
+                    if (!handled && sscanf(line, " n %31s", intent) == 1) {
                         L(">>> TEST n %s", intent);
                         nav_send(intent);
                         L("<<< TEST done");
@@ -765,9 +859,11 @@ static void* worker(void* unused) {
                 }
             }
 
+            if (g_test_attack > 0) g_test_attack--;
             for (int i = 0; i < 256; i++) if (g_tap[i]) { want[i] = 1; g_tap[i]--; }
             kbd_apply(want);
             if ((tick % 25) == 0) poll_lua_state();
+            if ((tick % 5)  == 0) poll_aim();
             if (dx || dy) cam_apply(dx, dy);
             else if ((tick % 25) == 0) cam_release_if_real_mouse();
             mouse_apply(0, 0, lmb, rmb);
