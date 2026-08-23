@@ -785,12 +785,49 @@ end
 -- Conversations are not "panels" as far as the engine is concerned, but they are the screen
 -- the player spends the most time on, so they get a section of their own: the reply lines are
 -- controls Reply1..ReplyN and a click on one is what picks that line.
+--
+-- A conversation also offers things that are not lines at all -- sleep, a gift, trade -- and the
+-- engine draws those as a row of bare icons under the replies (AddReplyText splits on
+-- nReplyAction and builds Icon<N> instead of Reply<N>). They pick a reply exactly like a line
+-- does, so leaving them out of the ring meant the pad simply could not book a room.
 local function build_dialog(dp)
   local list = {}
+  local mc = dp.lm_pPanel.m_Controls
   local n = dp.lm_nNumNormalReplies or dp.lm_nNumReplies or 0
   for i = 1, n do
-    local c = dp.lm_pPanel.m_Controls["Reply" .. i]
+    local c = mc["Reply" .. i]
     if c then table.insert(list, {c = c, x = 0, y = -i, idx = i}) end
+  end
+
+  -- Icons sit in one horizontal row, laid out right to left by index (X = -375 - (i-1)*75), so
+  -- order them by where they actually are rather than by name.
+  local icons = {}
+  for i = 1, (dp.lm_nNumGPActions or 0) do
+    local c = mc["Icon" .. i]
+    -- Status 0 is Disabled: the action exists but the game will not let it happen, and a focus
+    -- stop that does nothing is the thing that made these screens feel broken in the first place.
+    if c and c.m_Status ~= 0 and not c.wxp_offpanel then
+      local x = pos_of(c)
+      table.insert(icons, {c = c, x = x or 0})
+    end
+  end
+  table.sort(icons, function(a, b) return a.x < b.x end)
+  for i = 1, table.getn(icons) do
+    local c = icons[i].c
+    table.insert(list, {
+      c = c, x = 0, y = -(n + i), idx = n + i,
+      -- Bare icon, no text: the tooltip is the only thing that says what it does.
+      hi = function(on)
+        pcall(function() if on then c:OnMouseEnter() else c:OnMouseLeave() end end)
+        if on then pcall(function() c:OnTooltip() end) end
+      end,
+      act = function()
+        -- The mouse path, so the engine raises OnClick itself; the closure AddReplyText put
+        -- there is what knows which reply id this icon stands for.
+        local ok = pcall(function() c:OnLMouseDown() c:OnLMouseUp() end)
+        if not ok and type(c.OnClick) == "function" then pcall(function() c.OnClick() end) end
+      end,
+    })
   end
   seg("replies", list)
 end
