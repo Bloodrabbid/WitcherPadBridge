@@ -23,6 +23,7 @@
 | LT / RT | быстрый / силовой стиль (в панели — предыдущая / следующая секция) |
 | L3 / R3 | групповой стиль / переворот камеры |
 | Крестовина | дневник / карта / герой / алхимия (в панели — перемещение фокуса) |
+| Тачпад | **активная пауза** (на паде без тачпада — Start; см. `PauseButton`) |
 | Start | меню |
 | Back | быстрое сохранение |
 
@@ -93,6 +94,8 @@ MenuSensitivity  = 700    ; скорость курсора в главном м
 AimAssist        = 1      ; 0 выкл · 1 при атаке · 2 по кнопке
 AimButton        = r3     ; кнопка для режима 2: r3 l3 lb rb lt rt
 AimSpeed         = 2200   ; как быстро доворачивается камера, px/с
+
+PauseButton      = touchpad  ; активная пауза: touchpad menu back l3 r3 lt rt none
 LogLevel         = 1      ; 0 тишина · 1 обычный лог · 2 подробный
 ```
 
@@ -111,6 +114,18 @@ LogLevel         = 1      ; 0 тишина · 1 обычный лог · 2 по�
 * `AimAssist = 0` — камеру не трогает вообще.
 
 Если камера мотается из стороны в сторону — уменьшите `AimSpeed` или переключитесь на режим 2.
+
+### Активная пауза
+
+Пробел останавливает мир, не закрывая экран, — в бою это половина тактики: можно спокойно
+посмотреть, кто где стоит, и сменить стиль. На паде она висит на **клике по тачпаду**
+DualSense/DualShock: это единственная свободная кнопка посередине.
+
+На геймпаде без тачпада (Xbox и совместимые) мост сам переключается на **Menu** — Esc никуда
+не денется, он есть на B. Другую кнопку можно выбрать через `PauseButton`: `menu`, `back`,
+`l3`, `r3`, `lt`, `rt` или `none`, если пауза на паде не нужна. Выбранная кнопка теряет своё
+обычное действие, поэтому имейте в виду, чем жертвуете: L3 — групповой стиль, R3 — переворот
+камеры (и кнопка автонаведения в режиме 2), LT/RT — быстрый и силовой стиль.
 
 ## Steam и проверка целостности
 
@@ -190,6 +205,14 @@ turns the view while the attack button is held (the old behaviour); `AimAssist =
 only while `AimButton` is held (R3 by default, which gives up its camera flip in that mode);
 `AimAssist = 0` never touches the camera. If the view swings about, lower `AimSpeed` or switch
 to mode 2.
+
+**Active pause:** Space stops the world without covering the screen, which in a fight is half the
+tactics -- look at where everyone is standing, change combat style, carry on. On the pad it is the
+**touchpad click** of a DualSense/DualShock, the one free button in the middle. A pad without a
+touchpad falls back to **Menu** by itself (Escape is on B anyway). `PauseButton` picks another:
+`menu`, `back`, `l3`, `r3`, `lt`, `rt`, or `none`. Whichever you pick gives up its usual job --
+L3 is the group style, R3 the camera flip (and the aim button in mode 2), LT/RT the fast and
+strong styles.
 
 **Caveat:** the mod is all added files plus **one modified stock file**, `System/Scripts/debug.luc`
 — the only script the engine loads unconditionally, which is why it is the entry point. On macOS

@@ -94,6 +94,11 @@ local function define(class_name, key, label_en, label_ru, kind, lo, hi, default
   return obj
 end
 
+-- PauseButton is the one key the bridge reads as a word, so the slider position has to come
+-- back out as one. Order matches PAUSE_BTN_* on both bridges.
+local pause_names = { "touchpad", "menu", "back", "l3", "r3", "lt", "rt", "none" }
+local function pause_btn(v) return pause_names[v + 1] or "touchpad" end
+
 local function hundredths(v) return v / 100 end
 local function tenths(v)     return v / 10 end
 local function hundreds(v)   return v * 100 end
@@ -129,6 +134,15 @@ local ok, err = pcall(function()
            { "on button",  "по кнопке" } })
   define("WxpGamepadAimSpeed", "AimSpeed",
          "Gamepad: aim assist speed", "Геймпад: скорость автонаведения", "range", 6, 36, 22, hundreds)
+
+  -- Active pause (Space) had no button at all. The touchpad click is the middle button on a
+  -- DualSense; an Xbox pad has none, and the bridge falls back to Menu by itself there.
+  define("WxpGamepadPause", "PauseButton",
+         "Gamepad: active pause button", "Геймпад: кнопка активной паузы", "range", 0, 7, 0,
+         pause_btn,
+         { { "touchpad", "тачпад" }, { "Menu", "Menu" },   { "Back", "Back" },
+           { "L3", "L3" },           { "R3", "R3" },       { "LT", "LT" },
+           { "RT", "RT" },           { "none", "нет" } })
 
   cfg_write()
   log("registered " .. table.getn(wxp_settings) .. " settings")

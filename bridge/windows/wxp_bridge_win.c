@@ -89,6 +89,7 @@ typedef struct {
     int   aim_btn;           /* which button mode 2 listens to; see AIM_BTN_* */
     float aim_speed;         /* how fast the assist may turn the camera, px per second */
     int   log_level;         /* 0 quiet, 1 normal, 2 every event */
+    int   pause_btn;         /* which button toggles active pause; see PAUSE_BTN_* */
 } Cfg;
 
 /* Mode 2 exists because the assist turning the camera by itself, unasked, is unpleasant even
@@ -97,9 +98,17 @@ typedef struct {
 enum { AIM_BTN_R3 = 0, AIM_BTN_L3, AIM_BTN_LB, AIM_BTN_RB, AIM_BTN_LT, AIM_BTN_RT };
 static const char* const AIM_BTN_NAMES[] = { "r3", "l3", "lb", "rb", "lt", "rt" };
 
+/* Active pause (Space) is a Witcher 1 staple and had no home on the pad, so it gets the button
+   in the middle. XInput reports no touchpad, so "touchpad" resolves to Menu here -- the name is
+   kept only so one gamepad.ini reads the same on both platforms. */
+enum { PAUSE_BTN_TOUCHPAD = 0, PAUSE_BTN_MENU, PAUSE_BTN_BACK,
+       PAUSE_BTN_L3, PAUSE_BTN_R3, PAUSE_BTN_LT, PAUSE_BTN_RT, PAUSE_BTN_NONE };
+static const char* const PAUSE_BTN_NAMES[] = { "touchpad", "menu", "back",
+                                               "l3", "r3", "lt", "rt", "none" };
+
 /* One initialiser, used twice: the live config and the copy to fall back on. */
 #define WXP_CFG_DEFAULTS { 1, 0.20f, 0.16f, 1.7f, 1400.f, 900.f, 700.f, 0, \
-                           1, AIM_BTN_R3, 2200.f, 1 }
+                           1, AIM_BTN_R3, 2200.f, 1, PAUSE_BTN_TOUCHPAD }
 static const Cfg g_cfg_defaults = WXP_CFG_DEFAULTS;
 static Cfg       g_cfg          = WXP_CFG_DEFAULTS;
 
@@ -152,6 +161,12 @@ static void cfg_parse(const char* path) {
                 if (!_stricmp(word, AIM_BTN_NAMES[i])) { g_cfg.aim_btn = i; break; }
             continue;
         }
+        if (sscanf(line, " %63[A-Za-z] = %31s", key, word) == 2 && !_stricmp(key, "PauseButton")) {
+            int i;
+            for (i = 0; i < (int)(sizeof PAUSE_BTN_NAMES / sizeof *PAUSE_BTN_NAMES); i++)
+                if (!_stricmp(word, PAUSE_BTN_NAMES[i])) { g_cfg.pause_btn = i; break; }
+            continue;
+        }
         if (sscanf(line, " %63[A-Za-z] = %f", key, &v) != 2) continue;
         if      (!_stricmp(key, "Enabled"))         g_cfg.enabled  = (int)v;
         else if (!_stricmp(key, "DeadzoneLeft"))    g_cfg.dz_l     = v;
@@ -196,6 +211,7 @@ static void load_config(int force) {
          g_cfg.aim_speed, g_cfg.log_level,
          has_a ? "gamepad.ini" : "no gamepad.ini",
          has_b ? " + wxp_config.ini" : "");
+    wlog("config: active pause on %s", PAUSE_BTN_NAMES[g_cfg.pause_btn]);
 }
 
 /* --------------------------------------------------------------- Lua channels */
@@ -463,6 +479,33 @@ static DWORD WINAPI worker(LPVOID unused) {
         int aim_active = (g_cfg.aim == 1 && a) || (g_cfg.aim == 2 && aim_hold);
         int lmb = 0, rmb = 0;
 
+        /* Active pause. An XInput pad has no touchpad, so the default resolves to Menu; B
+           already sends Escape, so Menu is the one middle button that can be spared. */
+        int pause_btn = g_cfg.pause_btn, pause_hit = 0;
+        if (pause_btn == PAUSE_BTN_TOUCHPAD) pause_btn = PAUSE_BTN_MENU;
+        switch (pause_btn) {
+            case PAUSE_BTN_MENU: pause_hit = (g->wButtons & PAD_START) != 0; break;
+            case PAUSE_BTN_BACK: pause_hit = (g->wButtons & PAD_BACK)  != 0; break;
+            case PAUSE_BTN_L3:   pause_hit = l3; break;
+            case PAUSE_BTN_R3:   pause_hit = r3; break;
+            case PAUSE_BTN_LT:   pause_hit = lt; break;
+            case PAUSE_BTN_RT:   pause_hit = rt; break;
+            default: break;
+        }
+        /* Only in the world: in a panel these buttons are doing menu work, and a pause toggled
+           from a menu is a pause the player never asked for. */
+        if (pause_hit && !in_ui && !in_menu) want[SC_SPACE] = 1;
+        /* Edges only, and worth a normal-level line: presses are rare, and this is the one
+           place a log can say whether the button was even seen. */
+        {
+            static int p_pause = 0;
+            if (pause_hit != p_pause) {
+                p_pause = pause_hit;
+                if (pause_hit) wlog("active pause: %s pressed%s", PAUSE_BTN_NAMES[pause_btn],
+                                    (in_ui || in_menu) ? " (in a panel, ignored)" : "");
+            }
+        }
+
         if (!in_ui && !in_menu) {
             if (ly >  0.35f) want[SC_W] = 1;
             if (ly < -0.35f) want[SC_S] = 1;
@@ -531,10 +574,10 @@ static DWORD WINAPI worker(LPVOID unused) {
             if (y)  want[SC_I]   = 1;
             if (b)  want[SC_ESC] = 1;
             if (rb) want[SC_E] = 1;
-            if (lt) want[SC_X] = 1;
-            if (rt) want[SC_Z] = 1;
-            if (l3) want[SC_C] = 1;
-            if (r3) want[SC_F] = 1;
+            if (lt && pause_btn != PAUSE_BTN_LT) want[SC_X] = 1;
+            if (rt && pause_btn != PAUSE_BTN_RT) want[SC_Z] = 1;
+            if (l3 && pause_btn != PAUSE_BTN_L3) want[SC_C] = 1;
+            if (r3 && pause_btn != PAUSE_BTN_R3) want[SC_F] = 1;
 
             /* Sign wheel. Every combat binding here is a one-shot toggle, so holding LB costs
                nothing and buys the five signs a home: flick the right stick to a sector and
@@ -567,8 +610,8 @@ static DWORD WINAPI worker(LPVOID unused) {
                 g_wheel_sect = -1;
             }
         }
-        if (g->wButtons & PAD_START) want[SC_ESC] = 1;
-        if (g->wButtons & PAD_BACK)  want[SC_F5]  = 1;
+        if ((g->wButtons & PAD_START) && pause_btn != PAUSE_BTN_MENU) want[SC_ESC] = 1;
+        if ((g->wButtons & PAD_BACK)  && pause_btn != PAUSE_BTN_BACK) want[SC_F5]  = 1;
 
         /* Aim assist: spend the residual Lua published, but only while the player is asking to
            attack and is not steering the camera themselves. Rate-limited rather than snapped --

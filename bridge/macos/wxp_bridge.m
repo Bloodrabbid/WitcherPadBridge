@@ -18,6 +18,7 @@
 #import <Foundation/Foundation.h>
 #include <math.h>
 #import <GameController/GameController.h>
+#import <objc/runtime.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <AppKit/AppKit.h>
 #import <objc/message.h>
@@ -309,6 +310,7 @@ typedef struct {
     int   enabled;
     int   aim;               /* 0 off, 1 while the attack button is held, 2 while aim_btn is */
     int   aim_btn;           /* which button mode 2 listens to; see AIM_BTN_* */
+    int   pause_btn;         /* which button toggles the game's active pause; see PAUSE_BTN_* */
     float aim_speed;         /* how fast the assist may turn the camera, px per second */
 } Cfg;
 
@@ -317,10 +319,21 @@ typedef struct {
    player is holding a button and asking for it. */
 enum { AIM_BTN_R3 = 0, AIM_BTN_L3, AIM_BTN_LB, AIM_BTN_RB, AIM_BTN_LT, AIM_BTN_RT };
 static const char* const AIM_BTN_NAMES[] = { "r3", "l3", "lb", "rb", "lt", "rt" };
+
+/* Active pause (Space) had no button at all, and it is not a nicety: the game's own tutorial
+   card tells the player to pause mid-fight to change combat style, and the styles are on the
+   triggers. The touchpad is the default because it is the one button in the middle of a
+   DualSense and nothing else wanted it; a pad without one falls back to Menu, which is free
+   because B already sends Escape. */
+enum { PAUSE_BTN_TOUCHPAD = 0, PAUSE_BTN_MENU, PAUSE_BTN_BACK,
+       PAUSE_BTN_L3, PAUSE_BTN_R3, PAUSE_BTN_LT, PAUSE_BTN_RT, PAUSE_BTN_NONE };
+static const char* const PAUSE_BTN_NAMES[] = { "touchpad", "menu", "back",
+                                               "l3", "r3", "lt", "rt", "none" };
 /* One initialiser, used twice: the live config and the copy to fall back on. */
 #define WXP_CFG_DEFAULTS { .dz_l=0.20f, .dz_r=0.18f, .sens_x=1400.f, .sens_y=900.f, \
                            .menu_sens=700.f, .curve=1.7f, .invert_y=0, .enabled=1, \
-                           .aim=1, .aim_btn=AIM_BTN_R3, .aim_speed=2200.f }
+                           .aim=1, .aim_btn=AIM_BTN_R3, .pause_btn=PAUSE_BTN_TOUCHPAD, \
+                           .aim_speed=2200.f }
 static const Cfg g_cfg_defaults = WXP_CFG_DEFAULTS;
 static Cfg       g_cfg          = WXP_CFG_DEFAULTS;
 static char g_cfg_path[1024];      /* gamepad.ini in the write dir, edited by hand */
@@ -339,6 +352,11 @@ static void cfg_parse(const char* path) {
         if (sscanf(line, " %63[^= ] = %31s", k, w) == 2 && !strcasecmp(k, "AimButton")) {
             for (int i = 0; i < (int)(sizeof AIM_BTN_NAMES / sizeof *AIM_BTN_NAMES); i++)
                 if (!strcasecmp(w, AIM_BTN_NAMES[i])) { g_cfg.aim_btn = i; break; }
+            continue;
+        }
+        if (sscanf(line, " %63[^= ] = %31s", k, w) == 2 && !strcasecmp(k, "PauseButton")) {
+            for (int i = 0; i < (int)(sizeof PAUSE_BTN_NAMES / sizeof *PAUSE_BTN_NAMES); i++)
+                if (!strcasecmp(w, PAUSE_BTN_NAMES[i])) { g_cfg.pause_btn = i; break; }
             continue;
         }
         if (sscanf(line, " %63[^= ] = %f", k, &v) == 2) {
@@ -379,6 +397,7 @@ static void cfg_load(void) {
     L("           aim assist=%d (%s) speed=%.0f px/s  log level=%d", g_cfg.aim,
       g_cfg.aim == 0 ? "off" : (g_cfg.aim == 2 ? AIM_BTN_NAMES[g_cfg.aim_btn] : "on attack"),
       g_cfg.aim_speed, g_log_level);
+    L("           active pause on %s", PAUSE_BTN_NAMES[g_cfg.pause_btn]);
 }
 
 /* --------------------------------------------------------- environment dump
@@ -425,6 +444,20 @@ static void log_environment(void) {
             L("  ^ without this the pad cannot talk to the script layer at all");
     }
 }
+
+/* Touchpad click: a DualSense and a DualShock 4 expose it, an Xbox pad does not. Asked by
+   selector rather than by class so this builds and runs the same against any SDK. */
+static GCControllerButtonInput* pad_touchpad(GCExtendedGamepad* g) {
+    if (![g respondsToSelector:@selector(touchpadButton)]) return nil;
+    return [(id)g touchpadButton];   /* the selector can exist and still hand back nil */
+}
+static int pad_has_touchpad(GCExtendedGamepad* g)     { return pad_touchpad(g) != nil; }
+static int pad_touchpad_pressed(GCExtendedGamepad* g) {
+    GCControllerButtonInput* b = pad_touchpad(g);
+    return b != nil && b.pressed;
+}
+/* Which button active pause ended up on this frame, so the button's normal job can stand down. */
+static int g_pause_claim = PAUSE_BTN_NONE;
 
 /* ------------------------------------------------------------- injection I/O */
 static uint8_t g_held[256];      /* macOS keycodes we currently hold */
@@ -701,7 +734,10 @@ static void* worker(void* unused) {
                drowns the log in exactly the case where someone is about to read it. */
             if (g && !pad_seen) {
                 pad_seen = 1;
-                L("gamepad connected: %s", pad_name ?: "?");
+                /* The touchpad line answers, from a log alone, why active pause landed on Menu
+                   on someone else's machine instead of the middle button. */
+                L("gamepad connected: %s (%s, touchpad %s)", pad_name ?: "?",
+                  object_getClassName(g), pad_has_touchpad(g) ? "yes" : "no");
             } else if (!g && pad_seen) {
                 pad_seen = 0;
                 L("gamepad disconnected (controllers=%lu)",
@@ -775,6 +811,41 @@ static void* worker(void* unused) {
                 int aim_mode2 = (g_cfg.aim == 2);
                 int aim_active = (g_cfg.aim == 1 && attack_btn) || (aim_mode2 && aim_hold);
 
+                /* Active pause. Which button, and whether the pad even has a touchpad --
+                   a DualSense does, an Xbox pad does not, so fall back to Menu there rather
+                   than leave the feature silently absent on half the hardware. */
+                {
+                    int pb = g_cfg.pause_btn, hit = 0;
+                    if (pb == PAUSE_BTN_TOUCHPAD && !pad_has_touchpad(g)) {
+                        static int moaned = 0;
+                        if (!moaned) { moaned = 1; L("pause: this pad has no touchpad, using Menu"); }
+                        pb = PAUSE_BTN_MENU;
+                    }
+                    switch (pb) {
+                        case PAUSE_BTN_TOUCHPAD: hit = pad_touchpad_pressed(g);      break;
+                        case PAUSE_BTN_MENU:     hit = g.buttonMenu.pressed;         break;
+                        case PAUSE_BTN_BACK:     hit = g.buttonOptions.pressed;      break;
+                        case PAUSE_BTN_L3:       hit = g.leftThumbstickButton.pressed;  break;
+                        case PAUSE_BTN_R3:       hit = g.rightThumbstickButton.pressed; break;
+                        case PAUSE_BTN_LT:       hit = g.leftTrigger.value  > 0.4f;  break;
+                        case PAUSE_BTN_RT:       hit = g.rightTrigger.value > 0.4f;  break;
+                        default: break;
+                    }
+                    /* Only in the world: in a panel the same button is doing menu work, and a
+                       pause toggled from a menu is a pause the player never asked for. */
+                    if (hit && !in_ui && !in_menu) want[MK_SPACE] = 1;
+                    /* Edges only, and worth a normal-level line: presses are rare, and this is
+                       the one place a log can say whether the button was even seen. */
+                    static int p_pause = 0;
+                    if (hit != p_pause) {
+                        p_pause = hit;
+                        if (hit) L("active pause: %s pressed%s", PAUSE_BTN_NAMES[pb],
+                                   (in_ui || in_menu) ? " (in a panel, ignored)" : "");
+                    }
+                    g_pause_claim = pb;
+                }
+
+
                 /* Buttons. In a panel the same physical buttons mean confirm/back/section, so
                    they are routed to the Lua focus layer instead of the gameplay bindings. */
                 {
@@ -814,11 +885,13 @@ static void* worker(void* unused) {
                         if (g.buttonY.pressed) want[MK_I]   = 1; /* inventory          */
                         if (b)                 want[MK_ESC] = 1; /* cancel / back      */
                         if (rb) want[MK_E] = 1;                  /* silver sword       */
-                        if (lt) want[MK_X] = 1;                  /* fast style         */
-                        if (rt) want[MK_Z] = 1;                  /* strong style       */
-                        if (g.leftThumbstickButton.pressed  && !(aim_mode2 && g_cfg.aim_btn == AIM_BTN_L3))
+                        if (lt && g_pause_claim != PAUSE_BTN_LT) want[MK_X] = 1;  /* fast style   */
+                        if (rt && g_pause_claim != PAUSE_BTN_RT) want[MK_Z] = 1;  /* strong style */
+                        if (g.leftThumbstickButton.pressed  && !(aim_mode2 && g_cfg.aim_btn == AIM_BTN_L3)
+                            && g_pause_claim != PAUSE_BTN_L3)
                             want[MK_C] = 1;                                   /* group style  */
-                        if (g.rightThumbstickButton.pressed && !(aim_mode2 && g_cfg.aim_btn == AIM_BTN_R3))
+                        if (g.rightThumbstickButton.pressed && !(aim_mode2 && g_cfg.aim_btn == AIM_BTN_R3)
+                            && g_pause_claim != PAUSE_BTN_R3)
                             want[MK_F] = 1;                                   /* flip camera  */
 
                         /* Sign wheel. Every combat binding here is a one-shot toggle, so
@@ -932,9 +1005,10 @@ static void* worker(void* unused) {
                     }
                 }
 
-                /* menu / system */
-                if (g.buttonMenu.pressed)    want[MK_ESC] = 1;
-                if (g.buttonOptions.pressed) want[MK_F5]  = 1;   /* quicksave */
+                /* menu / system. Whichever button active pause has taken keeps its own job only
+                   if pause did not claim it -- B already sends Escape, so Menu is expendable. */
+                if (g.buttonMenu.pressed    && g_pause_claim != PAUSE_BTN_MENU) want[MK_ESC] = 1;
+                if (g.buttonOptions.pressed && g_pause_claim != PAUSE_BTN_BACK) want[MK_F5]  = 1;
 
                 if ((tick % 250) == 0) {
                     int nk = 0; for (int i=0;i<256;i++) if (want[i]) nk++;

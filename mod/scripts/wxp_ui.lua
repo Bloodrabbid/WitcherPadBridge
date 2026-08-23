@@ -197,6 +197,29 @@ end
 
 -- ---------------------------------------------------------------- section builders
 
+-- Equipment slots give the focus layer almost nothing to work with: SelectButton, HilightSlot
+-- and DimmButton are not in this class's binding at all (checked at runtime -- they come back
+-- nil), and OnMouseEnter lights only a slot that holds an item. Every slot in the prologue is
+-- empty and reports m_Status 0, so focus was invisible across the whole panel: a pixel diff
+-- between two different focused slots came back empty. That is what read as "меню снаряжения
+-- странно работает" -- the stick moved and the screen did not.
+-- SetScale is the one lever the binding does expose, so the focused slot grows instead.
+local SLOT_SCALE = 1.35
+local function slot_focus(list)
+  for i = 1, table.getn(list) do
+    local e = list[i]
+    local c = e.c
+    -- Reset on every rebuild: a panel closed while a slot was focused would otherwise keep it
+    -- enlarged for the rest of the session.
+    pcall(function() c:SetScale(1.0) end)
+    e.hi = function(on)
+      pcall(function() c:SetScale(on and SLOT_SCALE or 1.0) end)
+      pcall(function() if on then c:OnMouseEnter() else c:OnMouseLeave() end end)
+      if on then pcall(function() c:OnTooltip() end) end
+    end
+  end
+end
+
 local function build_inventory(inv)
   local eq = {}
   local ec = panel_controls(inv.lm_pEquipmentPanel)
@@ -206,6 +229,7 @@ local function build_inventory(inv)
                    "Elixir1", "Elixir2", "Elixir3"}
     for i = 1, table.getn(order) do add(eq, ec[order[i]]) end
   end
+  slot_focus(eq)
   seg("equipment", eq)
 
   local rep = inv.lm_pRepositoryPanel
@@ -222,6 +246,7 @@ local function build_inventory(inv)
         end
       end
     end
+    slot_focus(bag)
     seg("bag", bag)
 
     local quest = {}
@@ -230,6 +255,7 @@ local function build_inventory(inv)
       local c = rc["QuestSlot" .. i]
       if c and c.m_Status == SLOT_OCCUPIED then add(quest, c) end
     end
+    slot_focus(quest)
     seg("quest", quest)
 
     if rep.lm_bFiltersVisible then
@@ -251,6 +277,7 @@ local function build_inventory(inv)
     for k, c in pairs(gc) do
       if type(c) == "table" and c.m_Status == SLOT_OCCUPIED then add(g, c) end
     end
+    slot_focus(g)
     seg("ground", g)
   end
 
@@ -264,6 +291,7 @@ local function build_inventory(inv)
       if type(c) == "table" and c.m_Status == SLOT_OCCUPIED then add(t, c) end
     end
     add(t, tc.TransferAllButton)
+    slot_focus(t)
     seg("container", t)
   end
 end
