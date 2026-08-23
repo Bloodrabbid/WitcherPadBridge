@@ -1234,6 +1234,16 @@ function wxp_intent(intent)
     if wxp_wheel == nil and wxp_load_wheel then wxp_load_wheel() end
     if wxp_wheel then return wxp_wheel.show(sub == "on") end
     return "no wheel"
+  elseif intent == "target" then
+    if wxp_combat == nil and wxp_load_combat then wxp_load_combat() end
+    if wxp_combat == nil then return "no combat layer" end
+    local r
+    if sub == "next" then r = wxp_combat.cycle(1)
+    elseif sub == "prev" then r = wxp_combat.cycle(-1)
+    elseif sub == "off" then wxp_combat.clear() return "target cleared"
+    else r = wxp_combat.acquire() end
+    if r == nil then return "no target" end
+    return "target " .. wxp_combat.status()
   elseif intent == "sign" then
     local n = tonumber(sub) or 0
     if wxp_wheel then

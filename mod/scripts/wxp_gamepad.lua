@@ -222,13 +222,18 @@ local hb_count, hb_t0, state_t = 0, nil, nil
 -- Everything the tick does lives in a global so the file can be re-run with
 -- g_Lua:PlayFile("wxp_gamepad") and take effect without re-wrapping OnHeartbeat.
 function wxp_heartbeat(self)
-  wxp_module = self
+  -- The ticker panel calls this with no self; only the module's own heartbeat carries one.
+  if self ~= nil then wxp_module = self end
   hb_count = hb_count + 1
   if hb_t0 == nil then
     hb_t0 = os.clock()
     wxp_log("heartbeat: first tick")
     if wxp_ui == nil and wxp_load_ui then wxp_load_ui() end
   end
+  -- Combat targeting only matters once a game is running, and CGuiInGame has to exist before it
+  -- can hook the enemy feed, so load it on the first tick that has one.
+  if wxp_combat == nil and g_GuiInGame ~= nil and wxp_load_combat then wxp_load_combat() end
+  if wxp_combat and wxp_mode == "world" then pcall(function() wxp_combat.tick() end) end
   poll_state()
   poll_nav()
   poll_cmd()
@@ -351,6 +356,12 @@ function wxp_load_ui()
   local ok2, err2 = pcall(function() g_Lua:PlayFile("wxp_ui") end)
   if not ok2 then wxp_log("ui load failed: " .. tostring(err2)) end
   return wxp_ui ~= nil
+end
+
+function wxp_load_combat()
+  local ok2, err2 = pcall(function() g_Lua:PlayFile("wxp_combat") end)
+  if not ok2 then wxp_log("combat load failed: " .. tostring(err2)) end
+  return wxp_combat ~= nil
 end
 
 local ok, err = pcall(function()
