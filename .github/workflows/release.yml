@@ -23,7 +23,7 @@ jobs:
     # and a fight on a macOS runner. Build it here and hand it over as an artifact.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install mingw-w64
         run: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-mingw-w64-i686
@@ -42,7 +42,7 @@ jobs:
           done
           echo "exports ok"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: LightFX.dll
           path: bridge/windows/LightFX.dll
@@ -55,9 +55,9 @@ jobs:
     outputs:
       version: ${{ steps.ver.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: LightFX.dll
           path: prebuilt
@@ -112,7 +112,7 @@ jobs:
             || { echo "install_win.sh did not report a missing game"; exit 1; }
           echo "installers ok"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: WitcherPadBridge-${{ steps.ver.outputs.version }}
           path: |
@@ -125,9 +125,9 @@ jobs:
     needs: package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: WitcherPadBridge-${{ needs.package.outputs.version }}
           path: dist
