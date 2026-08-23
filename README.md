@@ -12,7 +12,7 @@
 
 | | |
 |---|---|
-| Левый стик | движение |
+| Левый стик | движение; **слабое отклонение — шаг, сильное — бег** |
 | Правый стик | камера |
 | A | атака / подтвердить |
 | B | отмена / закрыть панель |
@@ -98,6 +98,7 @@ AimSpeed         = 2200   ; как быстро доворачивается к�
 
 PauseButton      = touchpad  ; активная пауза: touchpad menu back l3 r3 lt rt none
 
+RunThreshold     = 0.70   ; слабее — шаг, сильнее — бег; 0 = всегда бег
 Rumble           = 1      ; вибрация
 RumbleStrength   = 100    ; сила в процентах: 0 — тишина, 150 — сильнее
 LogLevel         = 1      ; 0 тишина · 1 обычный лог · 2 подробный
@@ -130,6 +131,16 @@ DualSense/DualShock: это единственная свободная кноп
 `l3`, `r3`, `lt`, `rt` или `none`, если пауза на паде не нужна. Выбранная кнопка теряет своё
 обычное действие, поэтому имейте в виду, чем жертвуете: L3 — групповой стиль, R3 — переворот
 камеры (и кнопка автонаведения в режиме 2), LT/RT — быстрый и силовой стиль.
+
+### Шаг и бег
+
+У игры нет клавиши «идти»: `actions.2da` знает только вперёд/назад/вбок, а `startup.lua`
+принудительно включает вечный бег — поэтому Геральт носится даже по комнате. Мод возвращает
+вторую скорость и вешает её на стик: слабое отклонение — шаг, сильное — бег. Замерено на живом
+персонаже: бег 7.5–9.4 единицы в секунду, шаг 2.1–2.5.
+
+Порог — `RunThreshold`, доля отклонения стика (0.70 = семь десятых хода). `0` возвращает старое
+поведение «всегда бег». В игре: Настройки → Игра → «Геймпад: бег при отклонении, %».
 
 ### Вибрация
 
@@ -232,6 +243,12 @@ touchpad falls back to **Menu** by itself (Escape is on B anyway). `PauseButton`
 `menu`, `back`, `l3`, `r3`, `lt`, `rt`, or `none`. Whichever you pick gives up its usual job --
 L3 is the group style, R3 the camera flip (and the aim button in mode 2), LT/RT the fast and
 strong styles.
+
+**Walk and run:** the game has no walk key -- actions.2da knows only forward, back and strafe --
+and startup.lua turns always-run on, so Geralt sprints across a room. The mod gives the second
+speed back and puts it on the stick: push a little to walk, push far to run. Measured on the live
+character: 7.5-9.4 units per second running against 2.1-2.5 walking. `RunThreshold` is the
+fraction of stick travel where it switches (0.70 by default); `0` restores always-run.
 
 **Rumble:** the game has none of its own -- a 2007 PC title with not one vibration call in it --
 but eON already links Core Haptics to emulate DirectInput force feedback, so the road existed and

@@ -313,6 +313,7 @@ typedef struct {
     int   aim_btn;           /* which button mode 2 listens to; see AIM_BTN_* */
     int   pause_btn;         /* which button toggles the game's active pause; see PAUSE_BTN_* */
     float aim_speed;         /* how fast the assist may turn the camera, px per second */
+    float run_threshold;     /* how far the left stick has to go before Geralt runs; 0 = off */
     int   rumble;            /* 0 off, 1 on */
     float rumble_strength;   /* per cent of whatever Lua asks for */
 } Cfg;
@@ -336,7 +337,7 @@ static const char* const PAUSE_BTN_NAMES[] = { "touchpad", "menu", "back",
 #define WXP_CFG_DEFAULTS { .dz_l=0.20f, .dz_r=0.18f, .sens_x=1400.f, .sens_y=900.f, \
                            .menu_sens=700.f, .curve=1.7f, .invert_y=0, .enabled=1, \
                            .aim=1, .aim_btn=AIM_BTN_R3, .pause_btn=PAUSE_BTN_TOUCHPAD, \
-                           .aim_speed=2200.f, .rumble=1, .rumble_strength=100.f }
+                           .aim_speed=2200.f, .rumble=1, .rumble_strength=100.f, .run_threshold=0.70f }
 static const Cfg g_cfg_defaults = WXP_CFG_DEFAULTS;
 static Cfg       g_cfg          = WXP_CFG_DEFAULTS;
 static char g_cfg_path[1024];      /* gamepad.ini in the write dir, edited by hand */
@@ -363,6 +364,7 @@ static void cfg_parse(const char* path) {
             continue;
         }
         if (sscanf(line, " %63[^= ] = %f", k, &v) == 2) {
+            if (!strcasecmp(k, "RunThreshold"))    { g_cfg.run_threshold = v; continue; }
             if (!strcasecmp(k, "Rumble"))         { g_cfg.rumble = (int)v; continue; }
             if (!strcasecmp(k, "RumbleStrength")) { g_cfg.rumble_strength = v; continue; }
             if      (!strcasecmp(k,"DeadzoneLeft"))  g_cfg.dz_l   = v;
@@ -403,7 +405,8 @@ static void cfg_load(void) {
       g_cfg.aim == 0 ? "off" : (g_cfg.aim == 2 ? AIM_BTN_NAMES[g_cfg.aim_btn] : "on attack"),
       g_cfg.aim_speed, g_log_level);
     L("           active pause on %s", PAUSE_BTN_NAMES[g_cfg.pause_btn]);
-    L("           rumble=%d strength=%.0f%%", g_cfg.rumble, g_cfg.rumble_strength);
+    L("           rumble=%d strength=%.0f%%   run threshold=%.2f", g_cfg.rumble,
+      g_cfg.rumble_strength, g_cfg.run_threshold);
 }
 
 /* --------------------------------------------------------- environment dump
@@ -896,6 +899,31 @@ static void* worker(void* unused) {
                     if (ly < -0.35f) want[MK_S] = 1;
                     if (lx < -0.35f) want[MK_A] = 1;
                     if (lx >  0.35f) want[MK_D] = 1;
+                }
+
+                /* Two speeds off how far the stick is pushed. The game itself has no walk key --
+                   actions.2da is only Forward/Backward/Strafe -- but startup.lua turns always-run
+                   on, and turning it back off is what walking is: measured on the live player,
+                   7.5-9.4 units per second running against 2.1-2.5 walking.
+
+                   The threshold is read off the RAW stick, not the deadzone-compensated value, so
+                   "0.70" means what it looks like: seven tenths of the way. Hysteresis, because a
+                   stick resting on the line would otherwise flip Geralt between gaits several
+                   times a second. Centred stick or a panel hands the game its default back, so
+                   nothing else that moves him -- click-to-move, a cutscene -- inherits a walk. */
+                if (g_cfg.run_threshold > 0.01f) {
+                    static int run_state = 1;
+                    float rawx = g.leftThumbstick.xAxis.value;
+                    float rawy = g.leftThumbstick.yAxis.value;
+                    float mag  = sqrtf(rawx * rawx + rawy * rawy);
+                    int want_run = run_state;
+                    if (in_ui || in_menu || mag < g_cfg.dz_l)      want_run = 1;
+                    else if (mag >= g_cfg.run_threshold)           want_run = 1;
+                    else if (mag <  g_cfg.run_threshold - 0.08f)   want_run = 0;
+                    if (want_run != run_state) {
+                        run_state = want_run;
+                        nav_send(want_run ? "run:1" : "run:0");
+                    }
                 }
 
                 /* Camera: speed is px/sec, integrated over real elapsed time, so the feel does

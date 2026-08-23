@@ -144,6 +144,12 @@ local ok, err = pcall(function()
            { "L3", "L3" },           { "R3", "R3" },       { "LT", "LT" },
            { "RT", "RT" },           { "none", "нет" } })
 
+  -- Walk. startup.lua turns always-run on and the game has no walk key, so Geralt sprints
+  -- across a room. This gives the left stick its second speed back; 0 means always run.
+  define("WxpGamepadRunThr", "RunThreshold",
+         "Gamepad: run past stick %", "Геймпад: бег при отклонении, %", "range", 0, 95, 70,
+         hundredths)
+
   -- Vibration. The game has none of its own -- there is not a rumble call anywhere in it -- so
   -- everything the pad does is our doing, which makes an off switch the polite minimum.
   define("WxpGamepadRumble", "Rumble",

@@ -1582,6 +1582,17 @@ function wxp_intent(intent)
     else r = wxp_combat.acquire() end
     if r == nil then return "no target" end
     return "target " .. wxp_combat.status()
+  elseif intent == "run" then
+    -- Two speeds off the left stick. The game has no walk key at all -- actions.2da has only
+    -- Forward/Backward/Strafe -- and startup.lua turns always-run on, so Geralt has been
+    -- sprinting everywhere. Measured on the live player: always-run gives 7.5-9.4 units per
+    -- second and walking 2.1-2.5, so this really is the walk/run split and not a nuance.
+    -- Both the engine call and the settings flag are set: the flag is what startup.lua uses,
+    -- and leaving the two disagreeing is how a setting comes back on its own later.
+    local want = (sub ~= "0")
+    g_cAuroraSettings.m_bAlwaysRun = want
+    pcall(function() g_pClientExoApp:SetAlwaysRun(want) end)
+    return want and "run" or "walk"
   elseif intent == "sign" then
     local n = tonumber(sub) or 0
     if wxp_wheel then

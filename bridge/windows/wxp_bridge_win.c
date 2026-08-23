@@ -97,6 +97,7 @@ typedef struct {
     float aim_speed;         /* how fast the assist may turn the camera, px per second */
     int   log_level;         /* 0 quiet, 1 normal, 2 every event */
     int   pause_btn;         /* which button toggles active pause; see PAUSE_BTN_* */
+    float run_threshold;     /* how far the left stick has to go before Geralt runs; 0 = off */
     int   rumble;            /* 0 off, 1 on */
     float rumble_strength;   /* per cent of whatever Lua asks for */
 } Cfg;
@@ -117,7 +118,7 @@ static const char* const PAUSE_BTN_NAMES[] = { "touchpad", "menu", "back",
 
 /* One initialiser, used twice: the live config and the copy to fall back on. */
 #define WXP_CFG_DEFAULTS { 1, 0.20f, 0.16f, 1.7f, 1400.f, 900.f, 700.f, 0, \
-                           1, AIM_BTN_R3, 2200.f, 1, PAUSE_BTN_TOUCHPAD, 1, 100.f }
+                           1, AIM_BTN_R3, 2200.f, 1, PAUSE_BTN_TOUCHPAD, 0.70f, 1, 100.f }
 static const Cfg g_cfg_defaults = WXP_CFG_DEFAULTS;
 static Cfg       g_cfg          = WXP_CFG_DEFAULTS;
 
@@ -188,6 +189,7 @@ static void cfg_parse(const char* path) {
         else if (!_stricmp(key, "AimAssist"))       g_cfg.aim      = (int)v;
         else if (!_stricmp(key, "AimSpeed"))        g_cfg.aim_speed = v;
         else if (!_stricmp(key, "LogLevel"))        g_cfg.log_level = (int)v;
+        else if (!_stricmp(key, "RunThreshold"))    g_cfg.run_threshold = v;
         else if (!_stricmp(key, "Rumble"))          g_cfg.rumble    = (int)v;
         else if (!_stricmp(key, "RumbleStrength"))  g_cfg.rumble_strength = v;
     }
@@ -222,8 +224,9 @@ static void load_config(int force) {
          g_cfg.aim_speed, g_cfg.log_level,
          has_a ? "gamepad.ini" : "no gamepad.ini",
          has_b ? " + wxp_config.ini" : "");
-    wlog("config: active pause on %s   rumble=%d strength=%.0f%%",
-         PAUSE_BTN_NAMES[g_cfg.pause_btn], g_cfg.rumble, g_cfg.rumble_strength);
+    wlog("config: active pause on %s   rumble=%d strength=%.0f%%   run threshold=%.2f",
+         PAUSE_BTN_NAMES[g_cfg.pause_btn], g_cfg.rumble, g_cfg.rumble_strength,
+         g_cfg.run_threshold);
 }
 
 /* --------------------------------------------------------------- Lua channels */
@@ -566,6 +569,29 @@ static DWORD WINAPI worker(LPVOID unused) {
             if (ly < -0.35f) want[SC_S] = 1;
             if (lx < -0.35f) want[SC_A] = 1;
             if (lx >  0.35f) want[SC_D] = 1;
+        }
+
+        /* Two speeds off how far the stick is pushed. The game has no walk key at all --
+           actions.2da is only Forward/Backward/Strafe -- but startup.lua turns always-run on,
+           and turning it back off is what walking is: measured on the live player, 7.5-9.4 units
+           per second running against 2.1-2.5 walking.
+
+           The threshold reads the RAW stick rather than the deadzone-compensated value, so 0.70
+           means seven tenths of the way. Hysteresis, because a stick resting on the line would
+           flip Geralt between gaits several times a second. A centred stick or a panel hands the
+           game its default back, so nothing else that moves him inherits a walk. */
+        if (g_cfg.run_threshold > 0.01f) {
+            static int run_state = 1;
+            float rawx = axis(g->sThumbLX), rawy = axis(g->sThumbLY);
+            float mag  = sqrtf(rawx * rawx + rawy * rawy);
+            int want_run = run_state;
+            if (in_ui || in_menu || mag < g_cfg.dz_l)    want_run = 1;
+            else if (mag >= g_cfg.run_threshold)         want_run = 1;
+            else if (mag <  g_cfg.run_threshold - 0.08f) want_run = 0;
+            if (want_run != run_state) {
+                run_state = want_run;
+                nav_send(want_run ? "run:1" : "run:0");
+            }
         }
 
         /* camera / cursor */
