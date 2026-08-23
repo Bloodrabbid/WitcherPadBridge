@@ -1,7 +1,10 @@
 #!/bin/bash
 # WitcherPadBridge -- macOS uninstaller. Restores the stock executable and signature.
 set -e
-GAME="${1:-/Users/udinkirill/Documents/WitcherXinput/steamapps/common/The Witcher Enhanced Edition}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/_game_mac.sh"
+GAME="$(wxp_game_or_die "${1:-}" "$0")"
+echo "== игра: $GAME =="
 APP="$GAME/The Witcher.app"
 BIN="$APP/Contents/MacOS/The Witcher"
 BACKUP="$GAME/WitcherPadBridge/backup"
@@ -11,13 +14,13 @@ if [ -f "$BACKUP/The Witcher.bin" ]; then
   cp "$BACKUP/The Witcher.bin" "$BIN"
 else
   echo "== no backup; stripping our load command instead =="
-  python3 "$(dirname "$0")/inject_loadcmd.py" remove "$BIN" "@executable_path/wxp_bridge.dylib"
+  python3 "$HERE/inject_loadcmd.py" remove "$BIN" "@executable_path/wxp_bridge.dylib"
 fi
 rm -f "$APP/Contents/MacOS/wxp_bridge.dylib"
 
 echo "== removing the Lua layer =="
 SCRIPTS="$GAME/System/Scripts"
-rm -f "$SCRIPTS/wxp_gamepad.luc" "$SCRIPTS/wxp_ui.luc"
+rm -f "$SCRIPTS"/wxp_*.luc
 if [ -f "$BACKUP/debug.luc" ]; then
   cp "$BACKUP/debug.luc" "$SCRIPTS/debug.luc"
 else

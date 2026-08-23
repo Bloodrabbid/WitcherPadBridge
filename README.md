@@ -32,31 +32,40 @@
 X его кастует. Секторы по часовой стрелке от «вверх»: Аард, Квен, Ирден, Игни, Аксий. Если
 отпустить LB, не трогая стик, это просто достаёт стальной меч.
 
-## Установка — macOS
+## Установка
 
-```sh
-tools/install_mac.sh
-```
+Готовый архив — на [странице релизов](../../releases). Распакуйте и запустите установщик своей
+платформы; папку игры он находит сам через библиотеки Steam, а если не нашёл — передайте путь
+аргументом.
 
-Скрипт делает бэкап оригинального исполняемого файла, кладёт мост внутрь `The Witcher.app`,
-прописывает его в load-командах бинаря и переподписывает бандл. После этого игра запускается
-обычным способом — из Steam или по иконке.
+| Платформа | Установка | Удаление |
+|---|---|---|
+| macOS | `tools/install_mac.sh` | `tools/uninstall_mac.sh` |
+| Steam Deck / Bazzite / ROG Ally (Proton) | `tools/install_win.sh` | `tools/uninstall_win.sh` |
+| Windows | двойной клик по `tools/install_windows.bat` | `tools/uninstall_windows.bat` |
 
-Удаление: `tools/uninstall_mac.sh`.
+Всё, что установщик трогает, сначала копируется в `<игра>/WitcherPadBridge/backup`.
+
+### macOS — что именно делает установщик
+
+Бэкап оригинального исполняемого файла, мост внутрь `The Witcher.app`, запись моста в
+load-командах бинаря и переподпись бандла. После этого игра запускается обычным способом — из
+Steam или по иконке. Инжектор и переменные окружения не нужны.
 
 **Важно.** Steam «Проверить целостность файлов игры» откатывает и мост, и Lua-слой — после
 проверки установку надо повторить. Подпись бандла становится ad-hoc: это нужно, чтобы система
 разрешила загрузить неподписанную Apple библиотеку.
 
-## Установка — Windows / Proton (Steam Deck, ROG Ally, Bazzite)
+### Windows / Proton — что именно делает установщик
 
-1. Сохраните копию `<игра>/System/Scripts/debug.luc` — мод её заменяет.
-2. `bridge/windows/LightFX.dll` → `<игра>/System/lightfx/wxp/LightFX.dll`
+1. Бэкап штатного `<игра>/System/Scripts/debug.luc` — мод его заменяет.
+2. `LightFX.dll` → `<игра>/System/lightfx/wxp/LightFX.dll`
 3. `mod/scripts/*.luc` → `<игра>/System/Scripts/`
 4. `mod/gamepad.ini` → `<игра>/gamepad.ini`
 
 Игра сама пытается загрузить `LightFX.dll` при каждом старте, поэтому ни инжектора, ни
-изменения бинаря здесь не нужно.
+изменения бинаря здесь не нужно. Те же четыре шага легко сделать руками, если установщик
+почему-то не подошёл.
 
 Из трёх скриптов два новые (`wxp_gamepad.luc`, `wxp_ui.luc`), а `debug.luc` — штатный файл игры
 с одной добавленной строкой: это единственный скрипт, который движок грузит безусловно, поэтому
@@ -108,15 +117,19 @@ Native-feeling gamepad support for **The Witcher: Enhanced Edition**: analogue m
 camera, pad-driven menus and panels, combat. Nothing extra to launch — install it and play.
 Runs on macOS (the eON port) and on Windows/Proton (Steam Deck, ROG Ally, Bazzite).
 
+Ready-made archives are on the [releases page](../../releases); the installers find the game
+through Steam's own library list, or take the path as an argument.
+
 **Install (macOS):** run `tools/install_mac.sh`. It backs up the original executable, puts the
 bridge inside `The Witcher.app`, names it in the executable's load commands and re-signs the
 bundle, so the game launches normally afterwards. Remove with `tools/uninstall_mac.sh`.
 
-**Install (Windows/Proton):** keep a copy of `<game>/System/Scripts/debug.luc` (the mod replaces
-it — it is the one script the engine always loads, so it serves as the entry point), then copy
-`bridge/windows/LightFX.dll` to `<game>/System/lightfx/wxp/LightFX.dll`, `mod/scripts/*.luc` to
-`<game>/System/Scripts/`, and `mod/gamepad.ini` to `<game>/gamepad.ini`. Turn **Steam Input off**
-for the game — the mod reads the pad through XInput itself.
+**Install (Windows/Proton):** run `tools/install_win.sh` on Linux (Steam Deck, Bazzite, ROG Ally)
+or double-click `tools/install_windows.bat` on Windows. It backs up the stock `debug.luc`, drops
+`LightFX.dll` into `<game>/System/lightfx/wxp/`, the compiled scripts into `<game>/System/Scripts/`
+and a default `gamepad.ini` into the game root. No injector and no patched executable: the game
+tries to load that DLL on every start by itself. Turn **Steam Input off** for the game — the mod
+reads the pad through XInput itself.
 
 **Settings:** `gamepad.ini`, re-read live. Deadzones, camera speed in pixels per second, response
 curve, Y inversion, menu cursor speed.

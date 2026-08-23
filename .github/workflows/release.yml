@@ -1,0 +1,167 @@
+name: build
+
+# Every push builds the whole package, so breakage surfaces on the commit that caused it rather
+# than on the day someone tries to cut a release. Pushing a v* tag additionally publishes it.
+on:
+  push:
+    branches: [master, main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version label for the archive (no tag is created)'
+        required: false
+        default: 'dev'
+
+permissions:
+  contents: write
+
+jobs:
+  windows-bridge:
+    # The Windows bridge is a 32-bit PE and needs mingw, which is a one-line apt install on Linux
+    # and a fight on a macOS runner. Build it here and hand it over as an artifact.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mingw-w64
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-mingw-w64-i686
+
+      - name: Build LightFX.dll
+        run: bridge/windows/build.sh
+
+      - name: Check it is a 32-bit PE with the exports the game looks for
+        run: |
+          file bridge/windows/LightFX.dll | tee /dev/stderr | grep -q 'PE32 executable'
+          # The game loads this DLL by name and calls into the LightFX API; a missing export
+          # means it is dropped on the floor with no error anyone will ever see.
+          for sym in LFX_Initialize LFX_Release LFX_Update LFX_Light; do
+            i686-w64-mingw32-objdump -p bridge/windows/LightFX.dll | grep -qw "$sym" \
+              || { echo "missing export $sym"; exit 1; }
+          done
+          echo "exports ok"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LightFX.dll
+          path: bridge/windows/LightFX.dll
+          if-no-files-found: error
+
+  package:
+    # macOS runner: it is the only one that can build and ad-hoc sign the Mach-O bridge.
+    needs: windows-bridge
+    runs-on: macos-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: LightFX.dll
+          path: prebuilt
+
+      - name: Work out the version
+        id: ver
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then v="${GITHUB_REF_NAME#v}"
+          else v="${{ inputs.version || 'dev' }}-$(git rev-parse --short HEAD)"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "building $v"
+
+      - name: Build the Lua compiler from the patched sources
+        run: |
+          # tools/luac in the tree is a local macOS build. Drop it so the runner builds its own
+          # and the patched source tree is proven self-sufficient on every run.
+          rm -f tools/luac tools/lua
+          make -s -C tools/lua-5.0.3
+          cp tools/lua-5.0.3/bin/luac tools/luac
+          cp tools/lua-5.0.3/bin/lua  tools/lua
+          # The engine accepts exactly one dump layout. Prove it here, before anything is built.
+          printf 'return 1\n' > /tmp/probe.lua
+          tools/luac -o /tmp/probe.luc /tmp/probe.lua
+          got=$(xxd -p -l 14 /tmp/probe.luc | tr -d '\n')
+          [ "$got" = "1b4c756150010404040608090908" ] \
+            || { echo "luac emits the wrong header: $got"; exit 1; }
+          echo "luac header ok"
+
+      - name: Package
+        env:
+          WXP_DLL: ${{ github.workspace }}/prebuilt/LightFX.dll
+        run: tools/package.sh "${{ steps.ver.outputs.version }}"
+
+      - name: Smoke-test the installers
+        run: |
+          # Not a real install -- there is no game on the runner -- but every installer must at
+          # least parse, and must fail with its own message rather than a shell error when the
+          # game is nowhere to be found.
+          out="dist/WitcherPadBridge-${{ steps.ver.outputs.version }}"
+          for s in "$out"/tools/*.sh; do bash -n "$s"; done
+          if command -v pwsh >/dev/null; then
+            for s in "$out"/tools/*.ps1; do
+              pwsh -NoProfile -Command "\$null = [ScriptBlock]::Create((Get-Content -Raw '$s'))" \
+                || { echo "PowerShell syntax error in $s"; exit 1; }
+            done
+          else
+            echo "no pwsh on this runner, skipping the PowerShell syntax check"
+          fi
+          bash "$out/tools/install_mac.sh" 2>&1 | grep -q "Не нашёл" \
+            || { echo "install_mac.sh did not report a missing game"; exit 1; }
+          bash "$out/tools/install_win.sh" 2>&1 | grep -q "Не нашёл" \
+            || { echo "install_win.sh did not report a missing game"; exit 1; }
+          echo "installers ok"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WitcherPadBridge-${{ steps.ver.outputs.version }}
+          path: |
+            dist/WitcherPadBridge-*.zip
+            dist/WitcherPadBridge-*.zip.sha256
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: WitcherPadBridge-${{ needs.package.outputs.version }}
+          path: dist
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VER: ${{ needs.package.outputs.version }}
+        run: |
+          cat > /tmp/notes.md <<'NOTES'
+          Полная поддержка геймпада для The Witcher: Enhanced Edition — запустил и играешь.
+
+          ## Установка
+
+          Распакуйте архив и запустите установщик для своей платформы:
+
+          | Платформа | Команда |
+          |---|---|
+          | macOS | `tools/install_mac.sh` |
+          | Steam Deck / Bazzite / ROG Ally (Proton) | `tools/install_win.sh` |
+          | Windows | двойной клик по `tools/install_windows.bat` |
+
+          Установщик сам находит папку игры через библиотеки Steam; если не нашёл — передайте
+          путь аргументом. Всё, что он трогает, предварительно копируется в
+          `<игра>/WitcherPadBridge/backup`, удаление — соответствующий `uninstall_*`.
+
+          На Windows и Proton **выключите Steam Input** для этой игры: мод читает пад напрямую
+          через XInput. Проверка целостности файлов в Steam откатывает установку — после неё
+          запустите установщик ещё раз.
+
+          Раскладка, настройки и диагностика — в README внутри архива.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" \
+            --title "WitcherPadBridge $VER" \
+            --notes-file /tmp/notes.md \
+            dist/WitcherPadBridge-*.zip \
+            dist/WitcherPadBridge-*.zip.sha256
