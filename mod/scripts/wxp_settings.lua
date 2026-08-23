@@ -82,7 +82,14 @@ local function define(class_name, key, label_en, label_ru, kind, lo, hi, default
   end
   local obj = C:new()
   RegisterLuaSetting(obj)
+  -- Read() restores the stored value and only falls back to GetDefaultValue when the registry
+  -- has no entry at all. Ask first, and on a setting the player has never touched put the
+  -- documented default in ourselves: AimSpeed came up 12 against a default of 22 on its first
+  -- run here, which would have shipped a mod whose ini says 2200 and whose menu says 1200.
+  local stored = false
+  pcall(function() stored = ReadSettingIniEntry(class_name, nil) and true or false end)
   pcall(function() obj:Read() end)
+  if not stored then pcall(function() obj:SetValue(default, nil) end) end
   table.insert(wxp_settings, {obj = obj, key = key, map = map})
   return obj
 end

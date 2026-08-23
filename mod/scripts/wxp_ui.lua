@@ -669,6 +669,91 @@ local function build_generic(obj, label)
   end
 end
 
+-- New Game is a small wizard the main menu keeps beside itself: lm_tPanels is the list of steps
+-- (content, difficulty, control mode) and lm_nActivePanel says which one is on screen, 0 meaning
+-- the menu itself. Those steps are engine panels -- userdata named GamePanel / DifficultyPanel /
+-- ControlsPanel -- and not the Lua panel wrappers the rest of the UI is built from: no
+-- lm_pPanel, so sub_panels never found one of them. The ring therefore kept the main menu's own
+-- buttons, which the wizard is drawn on top of, and up and down paged a menu nobody could see.
+local function wizard_step(mm)
+  local n, t = mm.lm_nActivePanel, mm.lm_tPanels
+  if type(t) ~= "table" or n == nil or n == 0 then return nil end
+  local e = t[n]
+  return e and e.Panel
+end
+
+local function build_wizard(pnl, label)
+  local cs
+  if not pcall(function() cs = pnl.m_Controls end) then return false end
+  if type(cs) ~= "table" then return false end
+  local names = {}
+  for k, v in pairs(cs) do table.insert(names, k) end
+  table.sort(names)
+
+  -- Every choice on these screens is two buttons: the illustrated card (Easy, Witcher, Mouse)
+  -- and the caption under it (EaseLabel, WitcherLabel, MouseLabel) which is where the OnClick
+  -- that actually picks the option lives. Both light up, so collecting both gives two stops per
+  -- choice and lights a different thing on every other press. Keep the cards -- the card's own
+  -- OnHilight lights the caption too, which is exactly what the mouse does -- and let the
+  -- card's OnLMouseDown delegate the click to the caption, which it already does.
+  local function is_caption(n)
+    if string.sub(n, -5) ~= "Label" then return false end
+    -- Named by hand in the shipped scripts, and not consistently: the card for EaseLabel is
+    -- "Easy", not "Ease". So do not try to pair them -- the suffix alone says which is which.
+    return true
+  end
+
+  local list, dropped = {}, 0
+  for i = 1, table.getn(names) do
+    local n = names[i]
+    local c = cs[n]
+    if type(c) == "table" and c.m_ButtonType ~= nil then
+      if is_caption(n) then dropped = dropped + 1
+      else
+        local x, y = pos_of(c)
+        if x == nil then
+          local okm, m = pcall(function() return c.m_pModel:GetPosition() end)
+          if okm and m then x, y = m.x, m.y end
+        end
+        if x then
+          local ctl = c
+          local e = {c = ctl, x = x, y = y}
+          e.hi = function(on)
+            pcall(function()
+              if on then ctl:OnMouseEnter() else ctl:OnMouseLeave() end
+            end)
+            -- The game hangs its own hover behaviour on these hooks, which is what carries the
+            -- highlight across to the caption. Calling them keeps card and caption in step.
+            pcall(function()
+              if on then if ctl.OnHilight then ctl.OnHilight() end
+              elseif ctl.OnUnhilight then ctl.OnUnhilight() end
+            end)
+          end
+          -- Back one step. The wizard's Exit is wired to SwitchToPrevPanel, and without this
+          -- the cancel button would be dead on every screen of it: the main menu has no
+          -- "close" of its own for U.close to find.
+          e.esc = function()
+            local ex = cs.Exit
+            if ex == nil then return false end
+            pcall(function() ex:OnLMouseDown() ex:OnLMouseUp() end)
+            return true
+          end
+          table.insert(list, e)
+        end
+      end
+    end
+  end
+  if table.getn(list) == 0 then return false end
+  -- Reading order, not alphabetical: the cards sit in a row with Back below them, and sorting by
+  -- name would open every step of the wizard with the focus on "Назад".
+  table.sort(list, function(a, b)
+    if math.abs(a.y - b.y) > 0.2 then return a.y > b.y end
+    return a.x < b.x
+  end)
+  seg(label, list)
+  return true
+end
+
 -- Conversations are not "panels" as far as the engine is concerned, but they are the screen
 -- the player spends the most time on, so they get a section of their own: the reply lines are
 -- controls Reply1..ReplyN and a click on one is what picks that line.
@@ -826,6 +911,16 @@ function U.refresh()
         })
       end
     end
+  elseif name == "MainMenu" then
+    -- While a wizard step is up the menu behind it is not on screen, so its buttons must not be
+    -- in the ring at all -- that is the whole complaint.
+    local step = wizard_step(obj)
+    local built = false
+    if step ~= nil then
+      local okW, r = pcall(function() return build_wizard(step, "NewGame") end)
+      built = okW and r
+    end
+    if not built then build_generic(obj, name) end
   elseif name == "Hero" then build_hero_traits(obj) build_generic(obj, name)
   elseif name == "Inventory" then build_inventory(obj)
   elseif name == "Alchemy" and obj.lm_pRepositoryPanel then build_inventory(obj)
@@ -1308,7 +1403,9 @@ function U.close()
   local fe = U.focus_entry
   if fe and fe.esc then
     local okE, handled = pcall(fe.esc)
-    if okE and handled then return U.describe() end
+    -- Refresh before describing: the step it just backed out of is gone, and reporting the
+    -- section we were in a moment ago is only confusing in a log.
+    if okE and handled then U.refresh() return U.describe() end
   end
   U.refresh()
   if U.panel == "Dialog" then return "in dialog" end
