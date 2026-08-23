@@ -11,6 +11,7 @@ $ErrorActionPreference = "Stop"
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Root = Split-Path -Parent $Here
 $Name = "The Witcher Enhanced Edition"
+. (Join-Path $Here "_log.ps1")
 
 function Test-Game([string]$p) {
     if (-not $p) { return $false }
@@ -53,15 +54,16 @@ if ($Game) {
 if (-not $Game) {
     throw "Не нашёл $Name. Укажите папку игры явно: -Game `"D:\путь\к\$Name`""
 }
-Write-Host "== игра: $Game =="
+Open-WxpLog $Game "install_windows.ps1"
+Say "== игра: $Game =="
 
 $Sys     = Join-Path $Game "System"
 $Scripts = Join-Path $Sys  "Scripts"
 $Backup  = Join-Path $Game "WitcherPadBridge\backup"
 $Dll     = Join-Path $Root "bridge\windows\LightFX.dll"
 
-if (-not (Test-Path $Dll))     { throw "нет $Dll - соберите мост (bridge/windows/build.sh)" }
-if (-not (Test-Path $Scripts)) { throw "нет папки скриптов: $Scripts" }
+if (-not (Test-Path $Dll))     { Fail "нет $Dll - соберите мост (bridge/windows/build.sh)" }
+if (-not (Test-Path $Scripts)) { Fail "нет папки скриптов: $Scripts" }
 
 New-Item -ItemType Directory -Force -Path $Backup | Out-Null
 # debug.luc is the game's own script with one line added: the only script the engine loads
@@ -69,32 +71,47 @@ New-Item -ItemType Directory -Force -Path $Backup | Out-Null
 $stock = Join-Path $Scripts "debug.luc"
 $saved = Join-Path $Backup  "debug.luc"
 if ((Test-Path $stock) -and -not (Test-Path $saved)) {
-    Write-Host "== бэкап штатного debug.luc =="
+    Say "== бэкап штатного debug.luc =="
     Copy-Item $stock $saved
 }
 
-Write-Host "== мост =="
+Say "== мост =="
 $lfx = Join-Path $Sys "lightfx\wxp"
 New-Item -ItemType Directory -Force -Path $lfx | Out-Null
 Copy-Item $Dll (Join-Path $lfx "LightFX.dll") -Force
 
-Write-Host "== Lua-слой =="
+Say "== Lua-слой =="
 $luc = @(Get-ChildItem (Join-Path $Root "mod\scripts\*.luc") -ErrorAction SilentlyContinue)
-if ($luc.Count -eq 0) { throw "в mod\scripts нет .luc - соберите пакет через tools/package.sh" }
-foreach ($f in $luc) { Copy-Item $f.FullName $Scripts -Force; Write-Host "   $($f.Name)" }
+if ($luc.Count -eq 0) { Fail "в mod\scripts нет .luc - соберите пакет через tools/package.sh" }
+foreach ($f in $luc) { Copy-Item $f.FullName $Scripts -Force; Say "   $($f.Name)" }
 
 $ini = Join-Path $Game "gamepad.ini"
 if (-not (Test-Path $ini)) {
-    Write-Host "== gamepad.ini по умолчанию =="
+    Say "== gamepad.ini по умолчанию =="
     Copy-Item (Join-Path $Root "mod\gamepad.ini") $ini
 }
+
+Write-WxpFiles @(
+    (Join-Path $lfx "LightFX.dll")
+    (Join-Path $Scripts "debug.luc")
+    (Join-Path $Scripts "wxp_gamepad.luc")
+    (Join-Path $Scripts "wxp_ui.luc")
+    (Join-Path $Scripts "wxp_combat.luc")
+    (Join-Path $Scripts "wxp_settings.luc")
+    (Join-Path $Scripts "wxp_signwheel.luc")
+    $ini
+)
+Note "done."
 
 Write-Host ""
 Write-Host "Готово. Запускайте игру обычным способом."
 Write-Host "  Настройки: $ini  (перечитывается на лету)"
 Write-Host "  Лог моста: $Sys\wxp_bridge.log"
+Write-Host "  Лог Lua:   $Sys\wxp_gamepad.log"
+Write-Host "  Отчёт установки: $Game\WitcherPadBridge\install.log"
+Write-Host "  Собрать всё для отчёта об ошибке: tools\diagnose.ps1"
 Write-Host ""
-Write-Host "ВАЖНО: в Steam выключите Steam Input для этой игры" -ForegroundColor Yellow
+Say "ВАЖНО: в Steam выключите Steam Input для этой игры" "Yellow"
 Write-Host "  (Свойства -> Контроллер -> «Отключить Steam Input») или переведите в passthrough."
 Write-Host "  Мод читает пад напрямую через XInput."
 Write-Host ""

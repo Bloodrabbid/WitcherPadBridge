@@ -42,6 +42,24 @@ jobs:
           done
           echo "exports ok"
 
+      - name: Parse the PowerShell installers
+        shell: pwsh
+        run: |
+          # These only ever run on someone else's Windows box, so a syntax error would ship
+          # undetected. ubuntu runners carry pwsh, so the check runs for real here rather than
+          # being skipped the way an "if pwsh is installed" guard would allow.
+          $bad = 0
+          Get-ChildItem tools/*.ps1 | ForEach-Object {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors.Count) {
+              $bad = 1
+              Write-Host "SYNTAX ERRORS in $($_.Name):"
+              $errors | ForEach-Object { Write-Host "  line $($_.Extent.StartLineNumber): $($_.Message)" }
+            } else { Write-Host "ok  $($_.Name)" }
+          }
+          if ($bad) { exit 1 }
+
       - uses: actions/upload-artifact@v5
         with:
           name: LightFX.dll
@@ -110,6 +128,13 @@ jobs:
             || { echo "install_mac.sh did not report a missing game"; exit 1; }
           bash "$out/tools/install_win.sh" 2>&1 | grep -q "Не нашёл" \
             || { echo "install_win.sh did not report a missing game"; exit 1; }
+          # The collector has to survive the case it exists for: a machine where nothing is
+          # installed and half the paths it looks for are absent.
+          bash "$out/tools/diagnose.sh" >/dev/null 2>&1 || { echo "diagnose.sh failed"; exit 1; }
+          d="$(ls -d "$out"/wxp-diag-* 2>/dev/null | head -1)"
+          [ -n "$d" ] && grep -q "NOT FOUND" "$d/report.txt" \
+            || { echo "diagnose.sh produced no usable report"; exit 1; }
+          rm -rf "$out"/wxp-diag-*
           echo "installers ok"
 
       - uses: actions/upload-artifact@v5

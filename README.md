@@ -104,10 +104,38 @@ Steam → Свойства → Установленные файлы → **«П�
 
 ## Если что-то не так
 
-* Лог моста: macOS `/tmp/wxp_bridge.log`, Windows `<игра>/System/wxp_bridge.log`.
-* Лог Lua-слоя: `<игра>/System/wxp_gamepad.log`.
-* Пад не виден — проверьте, что он подключён до запуска игры, и что Steam Input выключен.
-* После Steam-проверки целостности — переустановите мод.
+Сначала соберите отчёт — он собирает логи, настройки и состояние установки в одну папку:
+
+| Платформа | Команда |
+|---|---|
+| macOS, Steam Deck / Bazzite / ROG Ally (Proton) | `tools/diagnose.sh` |
+| Windows | двойной клик по `tools\diagnose.bat` |
+
+Скрипт ничего никуда не отправляет: он кладёт папку `wxp-diag-<дата>` и архив рядом с собой и
+печатает путь. Загляните в `report.txt` перед тем, как отправлять — там пути с вашим именем
+пользователя. Сохранения и прочее личное он не трогает.
+
+Где что лежит, если хочется посмотреть самому:
+
+* Лог моста: macOS `/tmp/wxp_bridge.log`, Windows/Proton `<игра>/System/wxp_bridge.log`.
+  Начинается баннером с версией и датой, дальше — строки со временем. Раз в 10 секунд пишется
+  строка `alive:` — по ней видно, видит ли мост пад, в каком он режиме и жив ли Lua-слой.
+* Лог Lua-слоя: `<игра>/System/wxp_gamepad.log` — то же самое со стороны игры.
+* Отчёт установки: `<игра>/WitcherPadBridge/install.log` — что и куда положил установщик,
+  с размерами файлов (этим ловится «установил, но скопировалась старая сборка»).
+* Оба лога ротируются на 512 КБ: предыдущий остаётся рядом с суффиксом `.1`.
+* `LogLevel = 2` в `gamepad.ini` включает подробный режим (каждое нажатие и клик), `0` — тишина.
+
+Что проверить в первую очередь:
+
+* Пад не виден — подключите его до запуска игры и **выключите Steam Input** для этой игры.
+  В логе это выглядит как `pad=NO` в строке `alive:`.
+* Меню не реагирует на пад, а камера работает — не установился Lua-слой. В логе моста строка
+  `lua layer ... NOT PRESENT`, в `report.txt` — `MISSING ... wxp_gamepad.luc`.
+* Всё установилось, но мод молчит — Steam-проверка целостности вернула штатный `debug.luc`
+  (`debug.luc calls wxp_gamepad: NO` в отчёте). Запустите установщик ещё раз.
+* `System writable: NO` в отчёте — игра лежит в папке, куда нет доступа на запись; каналы
+  между мостом и Lua живут там, без записи не заработает ничего.
 
 ---
 
@@ -138,3 +166,16 @@ curve, Y inversion, menu cursor speed.
 — the only script the engine loads unconditionally, which is why it is the entry point. On macOS
 the game executable and the bundle signature are modified too. Steam's "Verify integrity of game
 files" reverts those, and the mod goes quiet; just run the installer again.
+
+**When something is wrong:** run `tools/diagnose.sh` (macOS, Steam Deck, Bazzite, ROG Ally) or
+double-click `tools\diagnose.bat` (Windows). It collects the logs, the settings and the state of
+the install into one folder and a zip next to itself, and uploads nothing — read `report.txt`
+before sending it on, the paths in it contain your user name.
+
+The logs themselves: `/tmp/wxp_bridge.log` on macOS, `<game>/System/wxp_bridge.log` on
+Windows/Proton, `<game>/System/wxp_gamepad.log` for the script layer, and
+`<game>/WitcherPadBridge/install.log` for what the installer did. Each starts with a banner
+naming the build, every line is timestamped, and an `alive:` line every ten seconds says whether
+the pad is seen, which mode the bridge thinks it is in and whether the script layer is ticking.
+Both logs roll over at 512 KB, keeping the previous one as `.1`. `LogLevel = 2` in `gamepad.ini`
+adds a line per keypress and click; `0` silences the log entirely.

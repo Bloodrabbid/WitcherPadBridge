@@ -5,6 +5,7 @@ $ErrorActionPreference = "Stop"
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Root = Split-Path -Parent $Here
 $Name = "The Witcher Enhanced Edition"
+. (Join-Path $Here "_log.ps1")
 
 function Test-Game([string]$p) {
     if (-not $p) { return $false }
@@ -45,28 +46,30 @@ if ($Game) {
     $Game = Find-Game
 }
 if (-not $Game) { throw "Не нашёл $Name. Укажите папку игры: -Game `"D:\путь\к\$Name`"" }
-Write-Host "== игра: $Game =="
+Open-WxpLog $Game "uninstall_windows.ps1"
+Say "== игра: $Game =="
 
 $Sys     = Join-Path $Game "System"
 $Scripts = Join-Path $Sys  "Scripts"
 $Backup  = Join-Path $Game "WitcherPadBridge\backup"
 
-Write-Host "== мост =="
+Say "== мост =="
 Remove-Item (Join-Path $Sys "lightfx\wxp\LightFX.dll") -Force -ErrorAction SilentlyContinue
 foreach ($d in @("lightfx\wxp", "lightfx")) {
     $p = Join-Path $Sys $d
     if ((Test-Path $p) -and -not (Get-ChildItem $p -Force)) { Remove-Item $p -Force }
 }
 
-Write-Host "== Lua-слой =="
+Say "== Lua-слой =="
 Get-ChildItem (Join-Path $Scripts "wxp_*.luc") -ErrorAction SilentlyContinue | Remove-Item -Force
 $saved = Join-Path $Backup "debug.luc"
 if (Test-Path $saved) {
     Copy-Item $saved (Join-Path $Scripts "debug.luc") -Force
-    Write-Host "   debug.luc восстановлен из бэкапа"
+    Say "   debug.luc восстановлен из бэкапа"
 } else {
-    Write-Host "   бэкапа debug.luc нет - восстановите его проверкой целостности файлов в Steam"
+    Say "   бэкапа debug.luc нет - восстановите его проверкой целостности файлов в Steam"
 }
 
+Note "done."
 Write-Host ""
 Write-Host "Удалено. gamepad.ini оставлен на месте - сотрите вручную, если он больше не нужен."

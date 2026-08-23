@@ -26,13 +26,44 @@
 #include <mach-o/loader.h>
 #include <mach-o/nlist.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 
-/* ------------------------------------------------------------------ logging */
+/* ------------------------------------------------------------------ logging
+ * Nobody debugging this will have the machine it broke on in front of them, so the log has to
+ * answer "what did the bridge see" on its own: timestamps to line events up with what the player
+ * remembers, a banner naming the build, and a heartbeat proving the worker is still turning.
+ * LogLevel in gamepad.ini: 0 silent, 1 normal, 2 verbose (every key and click). */
+#ifndef WXP_VERSION
+#define WXP_VERSION "dev"
+#endif
+#define WXP_LOG_PATH "/tmp/wxp_bridge.log"
+#define WXP_LOG_MAX  (512 * 1024)
 static FILE* g_log;
-static void L(const char* fmt, ...) {
-    if (!g_log) { g_log = fopen("/tmp/wxp_bridge.log", "a"); if (!g_log) return; }
-    va_list ap; va_start(ap, fmt); vfprintf(g_log, fmt, ap); va_end(ap);
+static int   g_log_level = 1;
+
+static void wxp_vlog(const char* fmt, va_list ap) {
+    if (!g_log) { g_log = fopen(WXP_LOG_PATH, "a"); if (!g_log) return; }
+    struct timeval tv; gettimeofday(&tv, NULL);
+    struct tm tm; localtime_r(&tv.tv_sec, &tm);
+    fprintf(g_log, "%02d:%02d:%02d.%03d  ",
+            tm.tm_hour, tm.tm_min, tm.tm_sec, (int)(tv.tv_usec / 1000));
+    vfprintf(g_log, fmt, ap);
     fputc('\n', g_log); fflush(g_log);
+}
+static void L(const char* fmt, ...) {
+    if (g_log_level < 1) return;
+    va_list ap; va_start(ap, fmt); wxp_vlog(fmt, ap); va_end(ap);
+}
+/* Verbose: off by default, because one line per keypress buries the rest. */
+static void LV(const char* fmt, ...) {
+    if (g_log_level < 2) return;
+    va_list ap; va_start(ap, fmt); wxp_vlog(fmt, ap); va_end(ap);
+}
+/* Keep one previous log. A player who plays for a week should not hand over a 90 MB file. */
+static void log_rotate(void) {
+    struct stat st;
+    if (stat(WXP_LOG_PATH, &st) == 0 && st.st_size > WXP_LOG_MAX)
+        rename(WXP_LOG_PATH, WXP_LOG_PATH ".1");
 }
 
 /* ------------------------------------------------------- eON symbol resolution */
@@ -113,6 +144,10 @@ static int      g_lua_ui = -1;      /* -1 = no report yet */
    driving the cursor itself, because there is no focus layer to send intents to. */
 static time_t   g_state_seen;
 static int      g_lua_alive;
+/* Mirrors of the last live frame, read by the heartbeat. Cheap to keep, and they turn
+   "nothing happens" into "the sticks are dead" or "we think we are in a menu". */
+static float    g_hb_lx, g_hb_ly, g_hb_rx, g_hb_ry;
+static int      g_hb_ui, g_hb_menu;
 
 /* g_lua_alive: the state file has been seen at least once, i.e. the Lua layer is installed.
    lua_alive(): it is also ticking right now. The two differ exactly where it matters -- a
@@ -150,7 +185,12 @@ static int g_wheel_used;        /* a sign was picked during this LB hold */
 static void nav_send(const char* intent) {
     if (!g_nav_path[0]) return;
     FILE* f = fopen(g_nav_path, "w");
-    if (!f) return;
+    if (!f) {
+        /* Every menu press dies here if the folder is read-only, and silently. Say so once. */
+        static int moaned = 0;
+        if (!moaned) { moaned = 1; L("nav: CANNOT WRITE %s -- menu navigation will not work", g_nav_path); }
+        return;
+    }
     fprintf(f, "%u %s\n", ++g_nav_seq, intent);
     fclose(f);
     L("nav: %u %s", g_nav_seq, intent);
@@ -270,7 +310,12 @@ typedef struct {
     int   aim;               /* soft aim assist while the attack button is held */
     float aim_speed;         /* how fast the assist may turn the camera, px per second */
 } Cfg;
-static Cfg g_cfg = { .dz_l=0.20f, .dz_r=0.18f, .sens_x=1400.f, .sens_y=900.f, .menu_sens=700.f, .curve=1.7f, .invert_y=0, .enabled=1, .aim=1, .aim_speed=2200.f };
+/* One initialiser, used twice: the live config and the copy to fall back on. */
+#define WXP_CFG_DEFAULTS { .dz_l=0.20f, .dz_r=0.18f, .sens_x=1400.f, .sens_y=900.f, \
+                           .menu_sens=700.f, .curve=1.7f, .invert_y=0, .enabled=1, \
+                           .aim=1, .aim_speed=2200.f }
+static const Cfg g_cfg_defaults = WXP_CFG_DEFAULTS;
+static Cfg       g_cfg          = WXP_CFG_DEFAULTS;
 static char g_cfg_path[1024];      /* gamepad.ini in the write dir, edited by hand */
 static char g_cfg2_path[1024];     /* wxp_config.ini next to the game's scripts, written by
                                       the in-game Gamepad settings tab. Lua cannot reach the
@@ -293,6 +338,7 @@ static void cfg_parse(const char* path) {
             else if (!strcasecmp(k,"Enabled"))       g_cfg.enabled  = (int)v;
             else if (!strcasecmp(k,"AimAssist"))     g_cfg.aim      = (int)v;
             else if (!strcasecmp(k,"AimSpeed"))      g_cfg.aim_speed = v;
+            else if (!strcasecmp(k,"LogLevel"))      g_log_level    = (int)v;
         }
     }
     fclose(f);
@@ -306,13 +352,62 @@ static void cfg_load(void) {
     if (!fresh) return;
     if (has_a) g_cfg_mtime  = a.st_mtime;
     if (has_b) g_cfg2_mtime = b.st_mtime;
-    /* Reload both from scratch so clearing a key in one file cannot leave a stale value. */
+    /* Reload both from scratch so deleting a key really does restore its default -- parsing
+       over the live values would leave the last thing that key ever had, which is the opposite
+       of what deleting a line looks like it should do. */
+    g_cfg = g_cfg_defaults;
+    g_log_level = 1;
     if (has_a) cfg_parse(g_cfg_path);
     if (has_b) cfg_parse(g_cfg2_path);
     L("config reloaded: dzL=%.2f dzR=%.2f sens=%.1f/%.1f curve=%.2f invY=%d en=%d",
       g_cfg.dz_l, g_cfg.dz_r, g_cfg.sens_x, g_cfg.sens_y, g_cfg.curve, g_cfg.invert_y, g_cfg.enabled);
     L("           menu sensitivity=%.0f  (in-game tab: %s)", g_cfg.menu_sens, has_b ? "yes" : "no");
-    L("           aim assist=%d speed=%.0f px/s", g_cfg.aim, g_cfg.aim_speed);
+    L("           aim assist=%d speed=%.0f px/s  log level=%d", g_cfg.aim, g_cfg.aim_speed, g_log_level);
+}
+
+/* --------------------------------------------------------- environment dump
+ * Written once per session. Half the reports that will ever arrive are "it does nothing", and
+ * the answer is almost always in here: the script half was never installed, or the game folder
+ * is read-only, or the .app was re-verified by Steam and the load command is gone. */
+static char g_root[1024];
+
+static void note_path(const char* label, const char* path) {
+    struct stat st;
+    if (stat(path, &st) == 0)
+        L("  %-12s %s  (%lld bytes)", label, path, (long long)st.st_size);
+    else
+        L("  %-12s %s  -- NOT PRESENT", label, path);
+}
+
+static int dir_writable(const char* dir) {
+    char probe[1200];
+    snprintf(probe, sizeof probe, "%s/wxp_write_probe.tmp", dir);
+    FILE* f = fopen(probe, "w");
+    if (!f) return 0;
+    fclose(f); unlink(probe);
+    return 1;
+}
+
+static void log_environment(void) {
+    L("environment:");
+    L("  macOS       %s", [[[NSProcessInfo processInfo] operatingSystemVersionString] UTF8String] ?: "?");
+    L("  game root   %s", g_root[0] ? g_root : "(unknown)");
+    /* Two ways in: a load command baked into the binary by install_mac.sh, or DYLD_INSERT while
+       developing. Which one is live decides whether a Steam file verification just undid it. */
+    L("  injected by %s", getenv("DYLD_INSERT_LIBRARIES") ? "DYLD_INSERT_LIBRARIES" : "load command");
+    if (g_root[0]) {
+        char buf[1200], sys[1100];
+        snprintf(sys, sizeof sys, "%s/System", g_root);
+        L("files:");
+        note_path("config", g_cfg_path);
+        note_path("tab cfg", g_cfg2_path);
+        snprintf(buf, sizeof buf, "%s/Scripts/wxp_gamepad.luc", sys); note_path("lua layer", buf);
+        snprintf(buf, sizeof buf, "%s/Scripts/wxp_ui.luc",      sys); note_path("lua ui",    buf);
+        snprintf(buf, sizeof buf, "%s/Scripts/debug.luc",       sys); note_path("entry",     buf);
+        L("System writable: %s   (the channels live there)", dir_writable(sys) ? "yes" : "NO");
+        if (!dir_writable(sys))
+            L("  ^ without this the pad cannot talk to the script layer at all");
+    }
 }
 
 /* ------------------------------------------------------------- injection I/O */
@@ -323,8 +418,8 @@ static void kbd_apply(const uint8_t* want) {
     void* recv = pp_kbd ? *pp_kbd : NULL;
     if (!recv || !p_KeyDown || !p_KeyUp) return;
     for (int k = 0; k < 256; k++) {
-        if (want[k] && !g_held[k])      { p_KeyDown(recv, next_seq(), (unsigned short)k); g_held[k] = 1; }
-        else if (!want[k] && g_held[k]) { p_KeyUp  (recv, next_seq(), (unsigned short)k); g_held[k] = 0; }
+        if (want[k] && !g_held[k])      { p_KeyDown(recv, next_seq(), (unsigned short)k); g_held[k] = 1; LV("key DOWN kVK=%d", k); }
+        else if (!want[k] && g_held[k]) { p_KeyUp  (recv, next_seq(), (unsigned short)k); g_held[k] = 0; LV("key UP   kVK=%d", k); }
     }
 }
 
@@ -489,6 +584,7 @@ static void mouse_apply(int dx, int dy, int lmb, int rmb) {
        gated on the DirectInput device existing. */
     if (lmb != held_l) {
         held_l = lmb;
+        LV("mouse: L %d", lmb);
         if (recv && p_BtnDown && p_BtnUp) (lmb ? p_BtnDown : p_BtnUp)(recv, next_seq(), 0);
         post_mouse_event(lmb ? NSEventTypeLeftMouseDown : NSEventTypeLeftMouseUp, 1);
     }
@@ -512,7 +608,6 @@ static float dz_curve(float v, float dz, float curve) {
 static void* worker(void* unused) {
     (void)unused;
     @autoreleasepool {
-        L("=== WitcherPadBridge %s ===", "v0.1 (phase 1)");
         if (!symtab_init()) { L("symtab init FAILED"); return NULL; }
         pp_kbd   = (void**)sym("_gKeyboardEventReceiver");
         pp_mouse = (void**)sym("_gMouseEventReceiver");
@@ -551,6 +646,7 @@ static void* worker(void* unused) {
             if (_NSGetExecutablePath(exe, &sz) == 0) {
                 char* p = exe;
                 for (int i = 0; i < 4; i++) { char* q = strrchr(p, '/'); if (!q) break; *q = 0; }
+                snprintf(g_root, sizeof(g_root), "%s", p);
                 snprintf(g_state_path, sizeof(g_state_path), "%s/System/wxp_state.ini", p);
                 snprintf(g_nav_path,   sizeof(g_nav_path),   "%s/System/wxp_nav.txt",   p);
                 snprintf(g_cfg2_path,  sizeof(g_cfg2_path),  "%s/System/wxp_config.ini", p);
@@ -565,10 +661,11 @@ static void* worker(void* unused) {
             L("lua state path: %s (%s)", g_state_path,
               stat(g_state_path, &st) == 0 ? "present" : "not created yet");
         }
+        log_environment();
     }
 
     uint8_t want[256];
-    int logged_pad = 0, tick = 0;
+    int pad_seen = 0, tick = 0;
 
     for (;; tick++) {
         @autoreleasepool {
@@ -578,14 +675,22 @@ static void* worker(void* unused) {
             int dx = 0, dy = 0, lmb = 0, rmb = 0;
 
             GCExtendedGamepad* g = nil;
+            const char* pad_name = NULL;
             for (GCController* c in [GCController controllers]) {
-                if (c.extendedGamepad) { g = c.extendedGamepad; 
-                    if (!logged_pad) { L("gamepad: %s", [[c vendorName] UTF8String] ?: "?"); logged_pad = 1; }
+                if (c.extendedGamepad) { g = c.extendedGamepad;
+                    pad_name = [[c vendorName] UTF8String];
                     break; }
             }
-
-            if ((tick % 250) == 0 && !g) L("no extendedGamepad visible (controllers=%lu)",
-                                          (unsigned long)[[GCController controllers] count]);
+            /* Log the edges, not the state: a line every second while no pad is plugged in
+               drowns the log in exactly the case where someone is about to read it. */
+            if (g && !pad_seen) {
+                pad_seen = 1;
+                L("gamepad connected: %s", pad_name ?: "?");
+            } else if (!g && pad_seen) {
+                pad_seen = 0;
+                L("gamepad disconnected (controllers=%lu)",
+                  (unsigned long)[[GCController controllers] count]);
+            }
             double dt;
             {
                 static uint64_t prev_ns = 0;
@@ -607,6 +712,8 @@ static void* worker(void* unused) {
                 int in_ui    = have_lua && g_lua_ui > 0;
                 int in_menu  = g_lua_alive ? !have_lua       /* installed but not ticking */
                                            : g_ui_mode;      /* no Lua at all: guess from the cursor */
+                g_hb_lx = lx; g_hb_ly = ly; g_hb_rx = rx; g_hb_ry = ry;
+                g_hb_ui = in_ui; g_hb_menu = in_menu;
 
                 /* movement: left stick -> WASD (gameplay only; in a panel it walks the focus) */
                 if (!in_ui && !in_menu) {
@@ -785,8 +892,8 @@ static void* worker(void* unused) {
 
                 if ((tick % 250) == 0) {
                     int nk = 0; for (int i=0;i<256;i++) if (want[i]) nk++;
-                    L("pad lx=%.2f ly=%.2f rx=%.2f ry=%.2f dx=%d dy=%d keys=%d lmb=%d recv=%p",
-                      lx, ly, rx, ry, dx, dy, nk, lmb, pp_kbd ? *pp_kbd : NULL);
+                    LV("pad lx=%.2f ly=%.2f rx=%.2f ry=%.2f dx=%d dy=%d keys=%d lmb=%d recv=%p",
+                       lx, ly, rx, ry, dx, dy, nk, lmb, pp_kbd ? *pp_kbd : NULL);
                 }
             }
 
@@ -867,6 +974,19 @@ static void* worker(void* unused) {
             if (dx || dy) cam_apply(dx, dy);
             else if ((tick % 25) == 0) cam_release_if_real_mouse();
             mouse_apply(0, 0, lmb, rmb);
+
+            /* ~10 s. Proof the worker is still turning, plus everything needed to tell
+               "the pad is not seen" from "the pad is seen and the game ignores it". */
+            if ((tick % 2500) == 0) {
+                int keys = 0; for (int i = 0; i < 256; i++) if (g_held[i]) keys++;
+                int aim_live = g_aim_fresh && (time(NULL) - g_aim_fresh) < 2;
+                L("alive: pad=%s lx=%.2f ly=%.2f rx=%.2f ry=%.2f keys=%d mode=%s lua=%s aim=%s%.0f/%.0f%s",
+                  pad_seen ? "yes" : "NO", g_hb_lx, g_hb_ly, g_hb_rx, g_hb_ry, keys,
+                  g_hb_ui ? "ui" : (g_hb_menu ? "menu" : "gameplay"),
+                  g_lua_alive ? (lua_alive() ? "ticking" : "stale") : "absent",
+                  aim_live ? "" : "stale ", g_aim_px, g_aim_py,
+                  (aim_live && g_aim_ready) ? " ready" : "");
+            }
         }
         usleep(4000);   /* ~250 Hz */
     }
@@ -883,6 +1003,12 @@ static void wxp_init(void) {
         return;
     }
     setenv("WXP_BRIDGE_ACTIVE", "1", 1);
-    L("---- WitcherPadBridge loaded, pid %d ----", getpid());
+    log_rotate();
+    {   /* Date on the banner: log files get mailed around, and "which run was this" is the first
+           thing anyone reading one needs to know. */
+        time_t now = time(NULL); struct tm tm; localtime_r(&now, &tm);
+        L("==== WitcherPadBridge (macOS) %s, pid %d, %04d-%02d-%02d, epoch %lld ====",
+          WXP_VERSION, getpid(), tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, (long long)now);
+    }
     pthread_t t; pthread_create(&t, NULL, worker, NULL); pthread_detach(t);
 }

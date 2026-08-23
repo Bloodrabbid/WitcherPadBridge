@@ -38,12 +38,12 @@ else
   # arm64e is worth having (eON's own binary carries that slice) but not every toolchain will
   # emit it, so fall back rather than fail the build over a slice nothing strictly needs.
   ARCHS="-arch arm64 -arch arm64e -arch x86_64"
-  ( cd "$ROOT/bridge/macos" && clang -dynamiclib $ARCHS -O2 -fobjc-arc \
+  ( cd "$ROOT/bridge/macos" && clang -dynamiclib $ARCHS -O2 -fobjc-arc -DWXP_VERSION="\"$VER\"" \
       -framework Foundation -framework GameController -framework CoreGraphics -framework AppKit \
       -o wxp_bridge.dylib wxp_bridge.m 2>/dev/null ) || {
     echo "   (no arm64e from this toolchain, building arm64 + x86_64)"
     ARCHS="-arch arm64 -arch x86_64"
-    ( cd "$ROOT/bridge/macos" && clang -dynamiclib $ARCHS -O2 -fobjc-arc \
+    ( cd "$ROOT/bridge/macos" && clang -dynamiclib $ARCHS -O2 -fobjc-arc -DWXP_VERSION="\"$VER\"" \
         -framework Foundation -framework GameController -framework CoreGraphics -framework AppKit \
         -o wxp_bridge.dylib wxp_bridge.m )
   }
@@ -54,7 +54,7 @@ if [ -n "${WXP_DLL:-}" ]; then
   cp "$WXP_DLL" "$ROOT/bridge/windows/LightFX.dll"
   echo "   Windows bridge: taken from $WXP_DLL"
 else
-  "$ROOT/bridge/windows/build.sh" >/dev/null
+  WXP_VERSION="$VER" "$ROOT/bridge/windows/build.sh" >/dev/null
   echo "   Windows bridge: built"
 fi
 
@@ -63,19 +63,28 @@ echo "== collecting =="
 cp "$ROOT/bridge/macos/wxp_bridge.dylib"  "$OUT/bridge/macos/"
 cp "$ROOT/bridge/windows/LightFX.dll"     "$OUT/bridge/windows/"
 cp "$ROOT/mod/gamepad.ini"                "$OUT/mod/"
+STAGE="$(mktemp -d)"
+trap 'rm -rf "$STAGE"' EXIT
 for src in "$ROOT"/mod/scripts/*.lua; do
   [ -f "$src" ] || continue
   m="$(basename "$src" .lua)"
-  "$LUAC" -o "$OUT/mod/scripts/$m.luc" "$src" || { echo "   FAILED to compile $m.lua"; exit 1; }
+  # Stamp the version into the source before compiling, so a log file mailed in from another
+  # machine says which build wrote it. The placeholder is a plain assignment in wxp_gamepad.lua.
+  sed 's|^local VERSION = "dev"|local VERSION = "'"$VER"'"|' "$src" > "$STAGE/$m.lua"
+  "$LUAC" -o "$OUT/mod/scripts/$m.luc" "$STAGE/$m.lua" || { echo "   FAILED to compile $m.lua"; exit 1; }
   echo "   compiled $m.luc"
 done
 cp "$ROOT/README.md"                      "$OUT/"
-for f in _game_mac.sh install_mac.sh uninstall_mac.sh inject_loadcmd.py \
+for f in _game_mac.sh _log.sh _log.ps1 install_mac.sh uninstall_mac.sh inject_loadcmd.py \
          install_win.sh uninstall_win.sh \
-         install_windows.ps1 uninstall_windows.ps1 install_windows.bat uninstall_windows.bat; do
+         install_windows.ps1 uninstall_windows.ps1 install_windows.bat uninstall_windows.bat \
+         diagnose.sh diagnose.ps1 diagnose.bat; do
   cp "$HERE/$f" "$OUT/tools/"
 done
 chmod +x "$OUT"/tools/*.sh
+# The installers and the diagnostics collector all stamp this into their logs, so a file mailed
+# in from another machine says which build wrote it.
+echo "$VER" > "$OUT/VERSION"
 
 # ---------------------------------------------------------------- checks
 # The engine only accepts one dump layout, and a wrong luac produces files it silently refuses to
@@ -100,6 +109,15 @@ for n in wxp_gamepad wxp_ui wxp_settings wxp_signwheel wxp_combat debug; do
   [ -f "$OUT/mod/scripts/$n.luc" ] || { echo "   missing $n.luc"; exit 1; }
 done
 echo "   all scripts present"
+# Nothing about a release is harder to chase than a log that does not say which build it came
+# from, so prove the stamp landed rather than trusting the sed above.
+grep -q "$VER" "$OUT/mod/scripts/wxp_gamepad.luc" \
+  || { echo "   version $VER was not stamped into wxp_gamepad.luc"; exit 1; }
+echo "   version stamp ok ($VER)"
+for f in _log.sh _log.ps1 diagnose.sh diagnose.ps1 diagnose.bat VERSION; do
+  [ -e "$OUT/tools/$f" ] || [ -e "$OUT/$f" ] || { echo "   missing $f"; exit 1; }
+done
+echo "   support scripts present"
 
 ( cd "$ROOT/dist" && zip -qr "WitcherPadBridge-$VER.zip" "WitcherPadBridge-$VER" )
 ( cd "$ROOT/dist" && shasum -a 256 "WitcherPadBridge-$VER.zip" > "WitcherPadBridge-$VER.zip.sha256" )

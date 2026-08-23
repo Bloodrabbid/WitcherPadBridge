@@ -7,10 +7,39 @@
 local LOG   = "wxp_gamepad.log"
 local STATE = "wxp_state.ini"
 local CMD   = "wxp_cmd.txt"
+local LOGMAX = 512 * 1024
+
+-- Version stamp. tools/package.sh rewrites this line when it builds a release, so a log file
+-- says which build produced it -- the first question about any report from another machine.
+local VERSION = "dev"
+
+-- Timestamps: without them "and then it stopped working" cannot be lined up with anything in
+-- the bridge log next to it. os.date is not guaranteed to be in this engine's Lua, so ask once
+-- and carry on plain if it is not.
+local have_date = pcall(function() return os.date("%H:%M:%S") end)
+local function stamp()
+  if not have_date then return "" end
+  local ok, s = pcall(function() return os.date("%H:%M:%S") end)
+  if ok and s then return s .. "  " end
+  return ""
+end
 
 function wxp_log(s)
   local f = io.open(LOG, "a")
-  if f then f:write(tostring(s) .. "\n") f:close() end
+  if f then f:write(stamp() .. tostring(s) .. "\n") f:close() end
+end
+
+-- Keep one previous log. Played for a week with the REPL on, this file would otherwise be the
+-- largest thing anyone is ever asked to send back.
+local function log_rotate()
+  local f = io.open(LOG, "r")
+  if f == nil then return end
+  local ok, size = pcall(function() return f:seek("end") end)
+  f:close()
+  if ok and size and size > LOGMAX then
+    pcall(function() os.remove(LOG .. ".1") end)
+    pcall(function() os.rename(LOG, LOG .. ".1") end)
+  end
 end
 
 wxp_panelmgr = nil     -- live CGuiInGamePanelManager instance
@@ -364,6 +393,16 @@ function wxp_load_combat()
   return wxp_combat ~= nil
 end
 
+pcall(log_rotate)
+do
+  -- The engine formats time in its own zone, which need not match the one the bridge log uses.
+  -- The epoch is the same number on both sides, so print it and the two logs can be aligned
+  -- exactly instead of approximately.
+  local okt, epoch = pcall(function() return os.time() end)
+  wxp_log("==== WitcherPadBridge Lua layer " .. VERSION
+          .. "   epoch " .. (okt and tostring(epoch) or "?") .. " ====")
+end
+
 local ok, err = pcall(function()
   if wxp_armed then
     wxp_log("=== wxp_gamepad reloaded (hooks already in place) ===")
@@ -401,6 +440,14 @@ local ok, err = pcall(function()
   end
   setmetatable(env, mt)
   wxp_log("=== wxp_gamepad armed (v12) ===")
+  -- What the layer can see of its own installation. "Nothing happens" is nearly always one of
+  -- these three: no wxp_ui, no write access, or a stale debug.luc that never called us.
+  local okd, d = pcall(function() return os.date("%Y-%m-%d %H:%M:%S") end)
+  wxp_log("    date " .. (okd and tostring(d) or "unknown") .. "   log " .. LOG)
+  -- Both load lazily on the first gameplay tick, so "false" here is normal; what matters is
+  -- that they turn true later. If they never do, the .luc files are missing or failed to load.
+  wxp_log("    modules at arm time: ui=" .. tostring(wxp_ui ~= nil)
+          .. " combat=" .. tostring(wxp_combat ~= nil) .. " (both load on the first tick)")
   -- Snapshot first: the handlers below assign globals, which re-enters __newindex.
   local present = {}
   for name, fn in pairs(watch) do
