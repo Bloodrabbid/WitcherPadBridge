@@ -1,0 +1,20 @@
+# Decompiled game scripts: CD Projekt Red's content, not ours. Regenerate any time with
+#   java -jar tools/unluac.jar <game>/System/Scripts/<name>.luc > tools/decompiled/<name>.lua
+tools/decompiled/
+
+# Third-party binary, downloaded (github.com/HansWessels/unluac or the original by tehtmi)
+tools/unluac.jar
+
+# Upstream tarball; the patched source tree next to it is what actually builds
+tools/lua-5.0.3.tar.gz
+
+# Build output
+dist/
+bridge/macos/wxp_bridge.dylib
+bridge/windows/LightFX.dll
+probe/LightFX.dll
+tools/luac.out
+
+# Logs and scratch
+*.log
+.DS_Store

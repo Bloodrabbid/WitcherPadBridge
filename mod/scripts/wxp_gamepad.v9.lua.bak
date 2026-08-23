@@ -1,0 +1,324 @@
+-- WitcherPadBridge :: runtime layer
+-- Loaded from debug.luc, which runs before the GUI and gameplay scripts exist. Hooks are
+-- installed in two deferred steps: wait for the class global to appear, then wait for the
+-- method to be assigned onto it. Everything is pcall-wrapped so a mistake here can never
+-- stop the game from booting.
+
+local LOG   = "wxp_gamepad.log"
+local STATE = "wxp_state.ini"
+
+local function wxp_log(s)
+  local f = io.open(LOG, "a")
+  if f then f:write(s .. "\n") f:close() end
+end
+
+wxp_panelmgr   = nil     -- live CGuiInGamePanelManager instance
+wxp_module     = nil     -- live CNWCModule instance
+wxp_mode       = "?"     -- "world" | "ui"
+wxp_panel      = "-"     -- name of the panel that is currently up
+
+local function write_state()
+  local f = io.open(STATE, "w")
+  if f then
+    f:write("Mode=" .. wxp_mode .. "\n")
+    f:write("Panel=" .. wxp_panel .. "\n")
+    f:close()
+  end
+end
+
+local function refresh_mode(self)
+  local panel, n = "-", 0
+  if type(self.lm_sPanels) == "table" then
+    for pos, name in pairs(self.lm_sPanels) do
+      if name then n = n + 1 panel = tostring(name) end
+    end
+  end
+  local mode = "world"
+  if n > 0 then mode = "ui" end
+  if mode ~= wxp_mode or panel ~= wxp_panel then
+    wxp_mode, wxp_panel = mode, panel
+    write_state()
+    wxp_log("state -> mode=" .. mode .. " panel=" .. panel .. " open=" .. n)
+  end
+end
+
+-- Replace class[name] with a wrapper the moment the game assigns it.
+local function wrap_when_defined(class, name, make_wrapper)
+  local mt = getmetatable(class)
+  if mt == nil then mt = {} end
+  local prev = mt.__newindex
+  mt.__newindex = function(t, k, v)
+    if k == name and type(v) == "function" then
+      rawset(t, k, make_wrapper(v))
+      pcall(function() wxp_log("hook installed: " .. name) end)
+      return
+    end
+    if prev then prev(t, k, v) else rawset(t, k, v) end
+  end
+  setmetatable(class, mt)
+  if type(rawget(class, name)) == "function" then
+    rawset(class, name, make_wrapper(rawget(class, name)))
+    pcall(function() wxp_log("hook installed (immediate): " .. name) end)
+  end
+end
+
+local function on_panelmgr_class(class)
+  wrap_when_defined(class, "TogglePanel", function(orig)
+    return function(self, sPanel, bOn, bIgnore)
+      local r = orig(self, sPanel, bOn, bIgnore)
+      pcall(function()
+        wxp_panelmgr = self
+        wxp_log("TogglePanel " .. tostring(sPanel) .. " on=" .. tostring(bOn))
+        refresh_mode(self)
+      end)
+      return r
+    end
+  end)
+  wrap_when_defined(class, "SwitchPanel", function(orig)
+    return function(self, nPos, sNew)
+      pcall(function() wxp_log("SwitchPanel pos=" .. tostring(nPos) .. " -> " .. tostring(sNew)) end)
+      return orig(self, nPos, sNew)
+    end
+  end)
+end
+
+-- The module heartbeat is the engine's gameplay tick (it drives mouse-over targeting and SFX),
+-- so it is a free always-on hook and needs no GUI panel of our own.
+-- Panel hotkeys are handled engine-side, so TogglePanel never fires for them. Polling the
+-- manager from the gameplay heartbeat (~23 Hz) is both simpler and independent of how a panel
+-- got opened.
+local hb_count, hb_t0 = 0, nil
+local last_keys = ""
+
+-- ---------------------------------------------------------------------------
+-- GUI discovery / focus targets
+--
+-- Controls are attached to their panel with a panel-relative vector in Aurora
+-- units, so a target's screen position is panel + control. The exact scale and
+-- Y direction are measured live (dump_panel) rather than assumed.
+-- ---------------------------------------------------------------------------
+
+local dumped   = {}          -- panel name -> true, so each panel is dumped once
+local last_mouse = ""
+
+local function vstr(v)
+  if v == nil then return "nil" end
+  return string.format("%.4f,%.4f,%.4f", v.x or 0, v.y or 0, v.z or 0)
+end
+
+local function model_pos(o)
+  local ok, v = pcall(function() return o.m_pModel:GetPosition() end)
+  if ok then return v end
+  return nil
+end
+
+-- Cursor position as the GUI layer sees it. Correlated against the bridge's own
+-- cursor writes, this pins down the mapping between engine pixels and GUI units.
+local function poll_mouse()
+  local ok, s = pcall(function()
+    local v = Vector:new_local(0, 0, 0)
+    g_pGuiMan:GetMousePos(v)
+    return string.format("%.1f,%.1f", v.x, v.y)
+  end)
+  if ok and s ~= last_mouse then
+    last_mouse = s
+    wxp_log("mouse: " .. s)
+  end
+end
+
+local function panel_object(sName)
+  local mgr = wxp_panelmgr or (g_GuiInGame and g_GuiInGame.lm_pPanelManager)
+  if mgr == nil or type(mgr.lm_GuiPanels) ~= "table" then return nil end
+  local e = mgr.lm_GuiPanels[sName]
+  if e == nil then return nil end
+  return e.Panel
+end
+
+local function dump_panel(sName)
+  if dumped[sName] then return end
+  dumped[sName] = true
+  local obj = panel_object(sName)
+  if obj == nil then wxp_log("dump " .. sName .. ": no panel object") return end
+  local p = obj.lm_pPanel
+  if p == nil then wxp_log("dump " .. sName .. ": no lm_pPanel") return end
+  local f = io.open("wxp_dump.txt", "a")
+  if f == nil then return end
+  f:write("==== " .. sName .. " ====\n")
+  pcall(function()
+    f:write("gui " .. g_pGuiMan:GetGuiWidth() .. "x" .. g_pGuiMan:GetGuiHeight() .. "\n")
+  end)
+  f:write("panel pos " .. vstr(model_pos(p)) .. "\n")
+  local n = 0
+  if type(p.m_Controls) == "table" then
+    for name, c in pairs(p.m_Controls) do
+      n = n + 1
+      local vis = "?"
+      pcall(function() if c.IsVisible then vis = tostring(c:IsVisible()) end end)
+      f:write(string.format("  %-28s pos=%s vis=%s click=%s def=%s\n",
+        tostring(name), vstr(model_pos(c)), vis,
+        tostring(type(c.OnClick)), tostring(type(c.lm_Definition))))
+    end
+  end
+  f:write("controls " .. n .. "\n")
+  f:close()
+  wxp_log("dump " .. sName .. ": " .. n .. " controls -> wxp_dump.txt")
+end
+
+-- Panel hotkeys are handled engine-side and never reach the Lua TogglePanel, so ask the
+-- engine directly instead of reading the Lua manager's bookkeeping.
+local function poll_state()
+  local gi = g_GuiInGame
+  if gi == nil then return end
+  local open = false
+  local ok2, r = pcall(function() return gi:IsAnyPanelOpen() end)
+  if ok2 and r then open = true end
+  local name = "-"
+  local mgr = wxp_panelmgr or gi.lm_pPanelManager
+  if mgr and mgr.lm_sPanelsList and mgr.lm_sPanelsList.lm_nElementsCount then
+    local last = mgr.lm_sPanelsList:GetLastElement()
+    if last then name = tostring(last) end
+  end
+  local mode = "world"
+  if open then mode = "ui" end
+  if mode ~= wxp_mode or name ~= wxp_panel then
+    wxp_mode, wxp_panel = mode, name
+    write_state()
+    wxp_log("state -> mode=" .. mode .. " panel=" .. name)
+  end
+  if open and name ~= "-" then pcall(function() dump_panel(name) end) end
+end
+
+local function on_module_class(class)
+  wrap_when_defined(class, "OnHeartbeat", function(orig)
+    return function(self, nDeltaT)
+      pcall(function()
+        wxp_module = self
+        hb_count = hb_count + 1
+        if hb_t0 == nil then
+          hb_t0 = os.clock()
+          wxp_log("heartbeat: first tick")
+        elseif math.mod(hb_count, 250) == 0 then
+          wxp_log("heartbeat: tick " .. hb_count .. " at " .. tostring(os.clock() - hb_t0) .. "s")
+        end
+        poll_state()
+        poll_mouse()
+      end)
+      return orig(self, nDeltaT)
+    end
+  end)
+end
+
+-- Test aid: when System/wxp_autoload.txt exists, load the newest save straight from the main
+-- menu. Lets the game be driven headlessly, without reading the screen.
+local auto_step, auto_wait = 0, 0
+
+local function autoload_tick()
+  if auto_step == 0 then
+    local f = io.open("wxp_autoload.txt", "r")
+    if not f then auto_step = -1 return end
+    f:close()
+    local sys = g_pGuiMan and g_pGuiMan.lm_pInGameNewSystemPanel
+    local lp = sys and sys.lm_pInGameNewSystemLoadPanel
+    if not lp then return end
+    lp:SetType("LOAD")
+    auto_step, auto_wait = 1, 0
+    wxp_log("autoload: asked for the save list")
+  elseif auto_step == 1 then
+    auto_wait = auto_wait + 1
+    if auto_wait < 30 then return end
+    local sys = g_pGuiMan and g_pGuiMan.lm_pInGameNewSystemPanel
+    local lp = sys and sys.lm_pInGameNewSystemLoadPanel
+    local best = nil
+    if lp and type(lp.lm_tSaveGames) == "table" then
+      for i, e in pairs(lp.lm_tSaveGames) do
+        if e and e.ID and e.ID > 0 and (best == nil or e.ID > best.ID) then best = e end
+      end
+    end
+    if best == nil then
+      wxp_log("autoload: no saves found")
+      auto_step = -1
+      return
+    end
+    wxp_log("autoload: loading ID=" .. tostring(best.ID) .. " name=" .. tostring(best.SaveName))
+    os.remove("wxp_autoload.txt")
+    auto_step = -1
+    GetLoadSaveSystem():LoadSavedGame(best.ID, best.SaveName, best.SaveFileName)
+  end
+end
+
+local function on_mainmenu_class(class)
+  -- CMainMenuPanel:OnUpdate exists but is never registered, so the only reliable one-shot
+  -- trigger at the main menu is the panel's post-attachment callback.
+  -- smoke test: this one must run for the menu to exist at all
+  wrap_when_defined(class, "new", function(orig)
+    return function(cls)
+      pcall(function() wxp_log("CMainMenuPanel:new called") end)
+      return orig(cls)
+    end
+  end)
+  wrap_when_defined(class, "OnPostAttachmentInitialize", function(orig)
+    return function(self)
+      local r = orig(self)
+      pcall(function()
+        local f = io.open("wxp_autoload.txt", "r")
+        if not f then return end
+        f:close()
+        os.remove("wxp_autoload.txt")
+        wxp_log("autoload: main menu ready, trying QuickLoad")
+        local lss = GetLoadSaveSystem()
+        if lss == nil then
+          wxp_log("autoload: no load/save system")
+          return
+        end
+        lss:QuickLoad()
+        wxp_log("autoload: QuickLoad returned")
+      end)
+      return r
+    end
+  end)
+end
+
+local function on_guiingame_class(class)
+  wrap_when_defined(class, "TogglePanel", function(orig)
+    return function(self, sPanel, bOn)
+      pcall(function() wxp_log("CGuiInGame:TogglePanel " .. tostring(sPanel) .. " on=" .. tostring(bOn)) end)
+      return orig(self, sPanel, bOn)
+    end
+  end)
+end
+
+local ok, err = pcall(function()
+  local env = getfenv()
+  local watch = {
+    CGuiInGame             = on_guiingame_class,
+    CGuiInGamePanelManager = on_panelmgr_class,
+    CNWCModule             = on_module_class,
+    CMainMenuPanel         = on_mainmenu_class
+  }
+  local mt = getmetatable(env)
+  if mt == nil then mt = {} end
+  local prev = mt.__newindex
+  mt.__newindex = function(t, k, v)
+    if prev then prev(t, k, v) else rawset(t, k, v) end
+    local fn = watch[k]
+    if fn then
+      watch[k] = nil
+      pcall(function()
+        wxp_log("global appeared: " .. tostring(k))
+        fn(v)
+      end)
+    end
+  end
+  setmetatable(env, mt)
+  wxp_log("=== wxp_gamepad armed ===")
+  for name, fn in pairs(watch) do
+    if type(env[name]) == "table" then
+      watch[name] = nil
+      wxp_log("global already present: " .. name)
+      fn(env[name])
+    end
+  end
+  write_state()
+end)
+
+if not ok then wxp_log("ERROR: " .. tostring(err)) end
