@@ -13,6 +13,13 @@
 --
 -- Do NOT try to enumerate creatures by walking object ids through GetGameObject: an id that is
 -- not a live object takes the game down with it. Verified the hard way.
+--
+-- The same rule applies to creatures we are already holding. A creature that the engine has
+-- deleted leaves a dangling userdata behind, and calling anything on it is a bus error, not a
+-- Lua error -- pcall does not save us. lg_tCreatureList is the engine's own register of live
+-- creatures (CNWCCreature:OnCreate adds, OnDelete removes), so a plain table lookup answers
+-- "is this still a real object" without touching the object at all. Every path in here goes
+-- through registered() before it dereferences anything.
 
 wxp_combat = {}
 local C = wxp_combat
@@ -27,6 +34,13 @@ C.watching = true     -- log combat mode / enemy count / lock whenever they chan
 
 local function log(s) if wxp_log then wxp_log("cbt: " .. tostring(s)) end end
 
+-- A pointer lookup, nothing more: safe to call on a creature that may already be gone.
+local function registered(c)
+  if c == nil then return false end
+  if lg_tCreatureList == nil then return true end
+  return lg_tCreatureList[c] ~= nil
+end
+
 -- ---------------------------------------------------------------- enemy feed
 
 function C.on_event(name, a1)
@@ -40,7 +54,7 @@ function C.on_event(name, a1)
       C.enemies[a1] = nil
       if rawequal(a1, C.target) then C.target = nil end
     end
-  elseif a1 ~= nil then
+  elseif a1 ~= nil and registered(a1) then
     -- add / update / hilite / add_and_hilite all mean "this one is in the fight"
     C.enemies[a1] = os.clock()
   end
@@ -71,6 +85,7 @@ local function pos_of(o)
 end
 
 local function alive(c)
+  if not registered(c) then return false end
   local ok, r = pcall(function()
     local p = c:GetCreatureProxy()
     if p == nil then return false end
@@ -94,7 +109,9 @@ function C.candidates()
     face = v
   end)
   for c, _ in pairs(C.enemies) do
+    if not registered(c) then C.enemies[c] = nil end
     local ok, e = pcall(function()
+      if not registered(c) then return nil end
       if rawequal(c, g_Player) then return nil end
       if not alive(c) then return nil end
       local w = pos_of(c)
@@ -126,6 +143,7 @@ end
 local NO_OBJECT = 0
 
 function C.set(c)
+  if c ~= nil and not registered(c) then return false end
   C.target = c
   local id = NO_OBJECT
   if c ~= nil then
@@ -172,11 +190,11 @@ local function watch()
   local n = 0
   for _, _ in pairs(C.enemies) do n = n + 1 end
   local tag = "-"
-  if C.target then pcall(function() tag = C.target:GetObjectTag() end) end
+  if registered(C.target) then pcall(function() tag = C.target:GetObjectTag() end) end
   local held = "-"
   pcall(function()
     local h = g_Module:GetLockedAttackTarget()
-    if h then held = h:GetObjectTag() end
+    if registered(h) then held = h:GetObjectTag() end
   end)
   if mode ~= last.mode or n ~= last.n or tag ~= last.tag or held ~= last.held then
     last.mode, last.n, last.tag, last.held = mode, n, tag, held
@@ -187,8 +205,10 @@ end
 function C.tick()
   if C.watching then pcall(watch) end
   if not C.enabled or g_Player == nil or g_Module == nil then return end
+  if C.target ~= nil and not registered(C.target) then C.target = nil end
   local held = nil
   pcall(function() held = g_Module:GetLockedAttackTarget() end)
+  if held ~= nil and not registered(held) then held = nil end
   if C.target ~= nil then
     if not alive(C.target) then C.target = nil
     elseif held == nil then C.set(C.target) end
@@ -202,7 +222,7 @@ end
 function C.status()
   local list = C.candidates()
   local s = "enemies=" .. table.getn(list) .. " target="
-  if C.target then
+  if registered(C.target) then
     local ok, t = pcall(function() return C.target:GetObjectTag() end)
     s = s .. (ok and tostring(t) or "?")
   else

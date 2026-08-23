@@ -630,6 +630,17 @@ local function open_panel()
     if wxp_mainmenu then return "MainMenu", wxp_mainmenu end
     return nil, nil
   end
+  -- Popups that pause the game and sit on top of whatever is behind them. The prologue throws
+  -- tutorial cards at the player constantly and until now the pad could not answer one at all --
+  -- the only way out was the mouse. They win over everything below, dialog included, because
+  -- that is exactly the case the engine itself handles by toggling the dialog off (ShowTutorialDialog).
+  local tut = gi.lm_pInGameNewTutorialPanel
+  if tut then
+    local okS, shownT = pcall(function() return tut:IsShown() end)
+    if okS and shownT and tut.lm_bActive then return "Tutorial", tut end
+  end
+  if act(gi.lm_pInGameNewSexCardPanel) then return "Card", gi.lm_pInGameNewSexCardPanel end
+  if act(gi.lm_pInGameNewRestPanel)    then return "Rest", gi.lm_pInGameNewRestPanel end
   if gi.lm_pDialogPanel and gi.lm_pDialogPanel.lm_bLowerActive then
     return "Dialog", gi.lm_pDialogPanel
   end
@@ -713,6 +724,27 @@ function U.refresh()
   SKIP = {}
   if obj.lm_bActive ~= false then pcall(function() mark_tab_buttons(obj) end) end
   if name == "Dialog" then build_dialog(obj)
+  elseif name == "Tutorial" then
+    build_generic(obj, name)
+    -- The card is one button and a wall of text, so up/down have to mean "read on".
+    for si = 1, table.getn(U.sections) do
+      if U.sections[si].name == "Tutorial" then U.sections[si].textscroll = obj.lm_pScroll end
+    end
+  elseif name == "Rest" then
+    build_generic(obj, name)
+    -- The hour dial is a bare CGuiSlider the panel keeps in a field of its own, not a control.
+    for si = 1, table.getn(U.sections) do
+      if U.sections[si].name == "Rest" and obj.lm_pSlider then
+        table.insert(U.sections[si].items, {
+          c = obj.lm_pSlider, x = 0, y = -1,
+          adj = function(d)
+            local sl = obj.lm_pSlider
+            sl:SetScrollPos(sl:GetScrollPos() + d)
+            obj:OnLMouseUp(sl)
+          end
+        })
+      end
+    end
   elseif name == "Hero" then build_hero_traits(obj) build_generic(obj, name)
   elseif name == "Inventory" then build_inventory(obj)
   elseif name == "Alchemy" and obj.lm_pRepositoryPanel then build_inventory(obj)
@@ -863,6 +895,21 @@ function U.move(dx, dy)
     -- the panel repaints its labels after every change, which wipes the focus tint
     highlight(fe, true)
     return U.describe()
+  end
+  -- A screen that is mostly text scrolls instead of moving a focus: there is nothing else on it
+  -- to step to, and a card long enough to need this is one the player has to be able to read.
+  if sec and sec.textscroll and dy ~= 0 then
+    local okT = pcall(function()
+      local sv = sec.textscroll
+      local sb = sv.lm_pScrollBar
+      local range = sb:GetScrollRange()
+      local pos = sb:GetScrollPos() - dy * (range / 6)
+      if pos < 0 then pos = 0 end
+      if pos > range then pos = range end
+      sb:SetScrollPos(pos)
+      sv:OnLMouseUp()
+    end)
+    if okT then return U.describe() end
   end
   if sec and (sec.list or sec.rows or sec.name == "replies") then
     local it = sec.items
@@ -1113,6 +1160,15 @@ local function panel_ops(key)
            function() g_pGuiMan.lm_pInGameNewSystemPanel:ToggleOff() end
   end
   if gi == nil then return nil end
+  -- Popups have no "open" of their own -- the game raises them. What matters is that cancel
+  -- can put them away, which is the whole reason the pad was stuck on them.
+  if key == "tutorial" then
+    return function() end, function() gi:CloseTutorialDialog() end
+  elseif key == "card" then
+    return function() end, function() gi.lm_pInGameNewSexCardPanel:ToggleOff() end
+  elseif key == "rest" then
+    return function() end, function() gi.lm_pInGameNewRestPanel:ToggleOff() end
+  end
   if key == "inventory" then
     return function() gi.lm_pNewInventoryPanel:ShowIndependent() end,
            function() gi.lm_pNewInventoryPanel:Hide() end
@@ -1133,7 +1189,8 @@ end
 
 local PANEL_KEY = {
   Inventory = "inventory", Alchemy = "alchemy", Diary = "diary",
-  Hero = "hero", Map = "map", System = "system"
+  Hero = "hero", Map = "map", System = "system",
+  Tutorial = "tutorial", Card = "card", Rest = "rest"
 }
 
 function U.open(key)
