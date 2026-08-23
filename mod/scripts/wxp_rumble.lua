@@ -72,17 +72,20 @@ end
 
 -- Named so the table below reads as a list of things that happen in the game rather than as a
 -- list of numbers: {heavy motor, light motor, milliseconds}.
+-- Tuned once against a real fight, where the first pass read as "light everywhere". Two things
+-- were wrong, and duration was the bigger one: Core Haptics ramps a continuous event, so a 45 ms
+-- tick never reaches the amplitude it was asked for. Nothing here is under ~70 ms now.
 R.feel = {
-  shake_min   = {0.25, 0.05,  90},   -- the floor for a camera shake, scaled up by its size
-  shake_max   = {1.00, 0.35, 220},
-  hit_dealt   = {0.45, 0.30,  70},   -- our blow landed
-  hit_taken   = {0.85, 0.25, 180},   -- Geralt lost vitality
-  kill        = {0.70, 0.45, 200},
-  chain       = {0.00, 0.55,  45},   -- the attack chain is ready for the next click
-  sign        = {0.35, 0.55, 120},
-  medallion   = {0.00, 0.35, 130},   -- the wolf medallion trembles near magic
-  levelup     = {0.30, 0.60, 320},
-  poisoned    = {0.55, 0.15, 260},
+  shake_min   = {0.40, 0.10, 110},   -- the floor for a camera shake, scaled up by its size
+  shake_max   = {1.00, 0.55, 260},
+  hit_dealt   = {0.70, 0.55,  95},   -- our blow landed
+  hit_taken   = {1.00, 0.45, 200},   -- Geralt lost vitality
+  kill        = {0.90, 0.60, 240},
+  chain       = {0.00, 0.90,  70},   -- the attack chain is ready for the next click
+  sign        = {0.55, 0.75, 140},
+  medallion   = {0.00, 0.50, 150},   -- the wolf medallion trembles near magic
+  levelup     = {0.50, 0.80, 340},
+  poisoned    = {0.75, 0.25, 280},
 }
 
 local function feel(name, scale)
@@ -197,9 +200,11 @@ function R.tick()
   if hp ~= nil then
     if R.hp ~= nil and hp < R.hp then
       -- Scale with the size of the wound, but never below the floor: a scratch should still be
-      -- felt, or the pad goes quiet exactly when the player is losing.
+      -- felt, or the pad goes quiet exactly when the player is losing. The floor started at half
+      -- and that was too polite -- the prologue brawl deals wounds of one to four points, so
+      -- almost every hit taken was landing at the floor and reading as nothing.
       local lost = R.hp - hp
-      feel("hit_taken", clamp(0.5 + lost / 60, 0.5, 1))
+      feel("hit_taken", clamp(0.7 + lost / 45, 0.7, 1))
     end
     R.hp = hp
   end
