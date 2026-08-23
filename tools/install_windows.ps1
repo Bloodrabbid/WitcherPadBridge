@@ -99,6 +99,7 @@ Write-WxpFiles @(
     (Join-Path $Scripts "wxp_combat.luc")
     (Join-Path $Scripts "wxp_settings.luc")
     (Join-Path $Scripts "wxp_signwheel.luc")
+    (Join-Path $Scripts "wxp_rumble.luc")
     $ini
 )
 Note "done."

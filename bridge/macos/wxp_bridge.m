@@ -19,6 +19,7 @@
 #include <math.h>
 #import <GameController/GameController.h>
 #import <objc/runtime.h>
+#import <CoreHaptics/CoreHaptics.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <AppKit/AppKit.h>
 #import <objc/message.h>
@@ -312,6 +313,8 @@ typedef struct {
     int   aim_btn;           /* which button mode 2 listens to; see AIM_BTN_* */
     int   pause_btn;         /* which button toggles the game's active pause; see PAUSE_BTN_* */
     float aim_speed;         /* how fast the assist may turn the camera, px per second */
+    int   rumble;            /* 0 off, 1 on */
+    float rumble_strength;   /* per cent of whatever Lua asks for */
 } Cfg;
 
 /* Mode 2 exists because the assist turning the camera by itself, unasked, is unpleasant even
@@ -333,7 +336,7 @@ static const char* const PAUSE_BTN_NAMES[] = { "touchpad", "menu", "back",
 #define WXP_CFG_DEFAULTS { .dz_l=0.20f, .dz_r=0.18f, .sens_x=1400.f, .sens_y=900.f, \
                            .menu_sens=700.f, .curve=1.7f, .invert_y=0, .enabled=1, \
                            .aim=1, .aim_btn=AIM_BTN_R3, .pause_btn=PAUSE_BTN_TOUCHPAD, \
-                           .aim_speed=2200.f }
+                           .aim_speed=2200.f, .rumble=1, .rumble_strength=100.f }
 static const Cfg g_cfg_defaults = WXP_CFG_DEFAULTS;
 static Cfg       g_cfg          = WXP_CFG_DEFAULTS;
 static char g_cfg_path[1024];      /* gamepad.ini in the write dir, edited by hand */
@@ -360,6 +363,8 @@ static void cfg_parse(const char* path) {
             continue;
         }
         if (sscanf(line, " %63[^= ] = %f", k, &v) == 2) {
+            if (!strcasecmp(k, "Rumble"))         { g_cfg.rumble = (int)v; continue; }
+            if (!strcasecmp(k, "RumbleStrength")) { g_cfg.rumble_strength = v; continue; }
             if      (!strcasecmp(k,"DeadzoneLeft"))  g_cfg.dz_l   = v;
             else if (!strcasecmp(k,"DeadzoneRight")) g_cfg.dz_r   = v;
             else if (!strcasecmp(k,"SensitivityX"))  g_cfg.sens_x = v;
@@ -398,6 +403,7 @@ static void cfg_load(void) {
       g_cfg.aim == 0 ? "off" : (g_cfg.aim == 2 ? AIM_BTN_NAMES[g_cfg.aim_btn] : "on attack"),
       g_cfg.aim_speed, g_log_level);
     L("           active pause on %s", PAUSE_BTN_NAMES[g_cfg.pause_btn]);
+    L("           rumble=%d strength=%.0f%%", g_cfg.rumble, g_cfg.rumble_strength);
 }
 
 /* --------------------------------------------------------- environment dump
@@ -443,6 +449,118 @@ static void log_environment(void) {
         if (!dir_writable(sys))
             L("  ^ without this the pad cannot talk to the script layer at all");
     }
+}
+
+/* ------------------------------------------------------------------- rumble
+
+   Same shape as the aim channel: Lua writes "<seq> <low> <high> <ms>" and the bridge plays it
+   once. low/high are 0..1000 because that is what XInput's two motors take on the other
+   platform -- the wire format follows the more constrained API, and macOS derives Core Haptics
+   parameters from it rather than the other way round.
+
+   eON already knows this road: it links GCHapticsLocalityLeftHandle/RightHandle and
+   CHHapticEventTypeHapticContinuous to emulate DirectInput force feedback. Witcher 1 never
+   creates such an effect -- the PC build has no rumble at all -- so the haptics are free for
+   us, and eON's own choice of localities is good evidence these are the ones that work here. */
+static char     g_rum_path[1024];
+static uint32_t g_rum_seq;
+static CHHapticEngine* g_hap_lo;   /* left handle: the heavy, low-frequency motor */
+static CHHapticEngine* g_hap_hi;   /* right handle: the light, high-frequency one */
+static int      g_hap_state;       /* 0 untried, 1 running, -1 unavailable, 2 needs a restart */
+
+static CHHapticEngine* hap_start(GCDeviceHaptics* h, GCHapticsLocality loc) {
+    CHHapticEngine* e = [h createEngineWithLocality:loc];
+    if (!e) return nil;
+    e.autoShutdownEnabled = NO;
+    NSError* err = nil;
+    if (![e startAndReturnError:&err]) {
+        L("rumble: engine for %s would not start: %s", [loc UTF8String],
+          err ? [[err localizedDescription] UTF8String] : "?");
+        return nil;
+    }
+    /* The system stops or resets an engine on its own -- sleep, another app, a reconnect. Mark
+       it rather than fight it: the next pulse rebuilds both engines. */
+    e.stoppedHandler = ^(CHHapticEngineStoppedReason r) { (void)r; g_hap_state = 2; };
+    e.resetHandler   = ^{ g_hap_state = 2; };
+    return e;
+}
+
+static void hap_teardown(void) {
+    if (g_hap_lo) { [g_hap_lo stopWithCompletionHandler:nil]; g_hap_lo = nil; }
+    if (g_hap_hi) { [g_hap_hi stopWithCompletionHandler:nil]; g_hap_hi = nil; }
+}
+
+/* Both handles are asked for separately so a heavy thud and a light tick stay different things.
+   A pad that offers only one locality gets that one, driven by whichever motor is louder. */
+static int hap_ready(GCController* c) {
+    if (g_hap_state == 1) return 1;
+    if (g_hap_state == -1) return 0;
+    if (g_hap_state == 2) { hap_teardown(); g_hap_state = 0; }
+    if (!c) return 0;
+    GCDeviceHaptics* h = c.haptics;
+    if (!h) {
+        g_hap_state = -1;
+        L("rumble: this pad reports no haptics -- vibration off");
+        return 0;
+    }
+    NSSet<GCHapticsLocality>* loc = [h supportedLocalities];
+    if ([loc containsObject:GCHapticsLocalityLeftHandle])  g_hap_lo = hap_start(h, GCHapticsLocalityLeftHandle);
+    if ([loc containsObject:GCHapticsLocalityRightHandle]) g_hap_hi = hap_start(h, GCHapticsLocalityRightHandle);
+    if (!g_hap_lo && !g_hap_hi) g_hap_lo = hap_start(h, GCHapticsLocalityDefault);
+    if (!g_hap_lo && !g_hap_hi) {
+        g_hap_state = -1;
+        L("rumble: no haptic engine would start -- vibration off");
+        return 0;
+    }
+    g_hap_state = 1;
+    L("rumble: haptics ready (heavy=%s light=%s)", g_hap_lo ? "yes" : "no", g_hap_hi ? "yes" : "no");
+    return 1;
+}
+
+/* Sharpness stands in for "which motor" when only one locality exists: low and blunt for the
+   heavy end, high and crisp for the light one. */
+static void hap_pulse(CHHapticEngine* e, float intensity, float sharpness, double secs) {
+    if (!e || intensity <= 0.01f) return;
+    NSError* err = nil;
+    CHHapticEventParameter* pi =
+        [[CHHapticEventParameter alloc] initWithParameterID:CHHapticEventParameterIDHapticIntensity
+                                                      value:intensity];
+    CHHapticEventParameter* ps =
+        [[CHHapticEventParameter alloc] initWithParameterID:CHHapticEventParameterIDHapticSharpness
+                                                      value:sharpness];
+    CHHapticEvent* ev = [[CHHapticEvent alloc] initWithEventType:CHHapticEventTypeHapticContinuous
+                                                      parameters:@[pi, ps]
+                                                    relativeTime:0
+                                                        duration:secs];
+    CHHapticPattern* pat = [[CHHapticPattern alloc] initWithEvents:@[ev] parameters:@[] error:&err];
+    if (!pat) return;
+    id<CHHapticPatternPlayer> pl = [e createPlayerWithPattern:pat error:&err];
+    if (!pl) return;
+    [pl startAtTime:0 error:&err];
+}
+
+static void poll_rumble(GCController* c) {
+    if (!g_rum_path[0] || !g_cfg.rumble) return;
+    FILE* f = fopen(g_rum_path, "r");
+    if (!f) return;
+    unsigned seq = 0; int lo = 0, hi = 0, ms = 0;
+    int n = fscanf(f, "%u %d %d %d", &seq, &lo, &hi, &ms);
+    fclose(f);
+    if (n < 4 || seq == g_rum_seq) return;
+    g_rum_seq = seq;
+    if (!hap_ready(c)) return;
+    float scale = g_cfg.rumble_strength / 100.0f;
+    float flo = (lo < 0 ? 0 : lo > 1000 ? 1000 : lo) / 1000.0f * scale;
+    float fhi = (hi < 0 ? 0 : hi > 1000 ? 1000 : hi) / 1000.0f * scale;
+    double secs = (ms < 10 ? 10 : ms > 2000 ? 2000 : ms) / 1000.0;
+    if (g_hap_lo && g_hap_hi) {
+        hap_pulse(g_hap_lo, flo, 0.15f, secs);
+        hap_pulse(g_hap_hi, fhi, 0.9f,  secs);
+    } else {
+        CHHapticEngine* e = g_hap_lo ? g_hap_lo : g_hap_hi;
+        hap_pulse(e, flo > fhi ? flo : fhi, flo > fhi ? 0.15f : 0.9f, secs);
+    }
+    LV("rumble: %d/%d for %d ms", lo, hi, ms);
 }
 
 /* Touchpad click: a DualSense and a DualShock 4 expose it, an Xbox pad does not. Asked by
@@ -700,11 +818,13 @@ static void* worker(void* unused) {
                 snprintf(g_nav_path,   sizeof(g_nav_path),   "%s/System/wxp_nav.txt",   p);
                 snprintf(g_cfg2_path,  sizeof(g_cfg2_path),  "%s/System/wxp_config.ini", p);
                 snprintf(g_aim_path,   sizeof(g_aim_path),   "%s/System/wxp_aim.txt",   p);
+                snprintf(g_rum_path,   sizeof(g_rum_path),   "%s/System/wxp_rumble.txt", p);
             } else {
                 snprintf(g_state_path, sizeof(g_state_path), "wxp_state.ini");
                 snprintf(g_nav_path,   sizeof(g_nav_path),   "wxp_nav.txt");
                 snprintf(g_cfg2_path,  sizeof(g_cfg2_path),  "wxp_config.ini");
                 snprintf(g_aim_path,   sizeof(g_aim_path),   "wxp_aim.txt");
+                snprintf(g_rum_path,   sizeof(g_rum_path),   "wxp_rumble.txt");
             }
             struct stat st;
             L("lua state path: %s (%s)", g_state_path,
@@ -724,9 +844,10 @@ static void* worker(void* unused) {
             int dx = 0, dy = 0, lmb = 0, rmb = 0;
 
             GCExtendedGamepad* g = nil;
+            GCController* pad = nil;          /* haptics hang off the controller, not the gamepad */
             const char* pad_name = NULL;
             for (GCController* c in [GCController controllers]) {
-                if (c.extendedGamepad) { g = c.extendedGamepad;
+                if (c.extendedGamepad) { g = c.extendedGamepad; pad = c;
                     pad_name = [[c vendorName] UTF8String];
                     break; }
             }
@@ -740,6 +861,8 @@ static void* worker(void* unused) {
                   object_getClassName(g), pad_has_touchpad(g) ? "yes" : "no");
             } else if (!g && pad_seen) {
                 pad_seen = 0;
+                hap_teardown();
+                g_hap_state = 0;
                 L("gamepad disconnected (controllers=%lu)",
                   (unsigned long)[[GCController controllers] count]);
             }
@@ -1091,6 +1214,7 @@ static void* worker(void* unused) {
             kbd_apply(want);
             if ((tick % 25) == 0) poll_lua_state();
             if ((tick % 5)  == 0) poll_aim();
+            if ((tick % 5)  == 2) poll_rumble(pad);
             if (dx || dy) cam_apply(dx, dy);
             else if ((tick % 25) == 0) cam_release_if_real_mouse();
             mouse_apply(0, 0, lmb, rmb);

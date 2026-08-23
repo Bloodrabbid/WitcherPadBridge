@@ -40,11 +40,13 @@ else
   ARCHS="-arch arm64 -arch arm64e -arch x86_64"
   ( cd "$ROOT/bridge/macos" && clang -dynamiclib $ARCHS -O2 -fobjc-arc -DWXP_VERSION="\"$VER\"" \
       -framework Foundation -framework GameController -framework CoreGraphics -framework AppKit \
+      -framework CoreHaptics \
       -o wxp_bridge.dylib wxp_bridge.m 2>/dev/null ) || {
     echo "   (no arm64e from this toolchain, building arm64 + x86_64)"
     ARCHS="-arch arm64 -arch x86_64"
     ( cd "$ROOT/bridge/macos" && clang -dynamiclib $ARCHS -O2 -fobjc-arc -DWXP_VERSION="\"$VER\"" \
         -framework Foundation -framework GameController -framework CoreGraphics -framework AppKit \
+      -framework CoreHaptics \
         -o wxp_bridge.dylib wxp_bridge.m )
   }
   codesign -f -s - "$ROOT/bridge/macos/wxp_bridge.dylib"
@@ -105,7 +107,7 @@ for arch in x86_64 arm64; do
     || { echo "   wxp_bridge.dylib has no $arch slice"; exit 1; }
 done
 echo "   wxp_bridge.dylib: $(lipo -info "$OUT/bridge/macos/wxp_bridge.dylib" | sed 's/.*are: //')"
-for n in wxp_gamepad wxp_ui wxp_settings wxp_signwheel wxp_combat debug; do
+for n in wxp_gamepad wxp_ui wxp_settings wxp_signwheel wxp_combat wxp_rumble debug; do
   [ -f "$OUT/mod/scripts/$n.luc" ] || { echo "   missing $n.luc"; exit 1; }
 done
 echo "   all scripts present"

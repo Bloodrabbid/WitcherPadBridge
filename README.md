@@ -24,6 +24,7 @@
 | L3 / R3 | групповой стиль / переворот камеры |
 | Крестовина | дневник / карта / герой / алхимия (в панели — перемещение фокуса) |
 | Тачпад | **активная пауза** (на паде без тачпада — Start; см. `PauseButton`) |
+| Вибрация | тряска камеры, удары, ритм серии, знаки, медальон (`Rumble`) |
 | Start | меню |
 | Back | быстрое сохранение |
 
@@ -96,6 +97,9 @@ AimButton        = r3     ; кнопка для режима 2: r3 l3 lb rb lt r
 AimSpeed         = 2200   ; как быстро доворачивается камера, px/с
 
 PauseButton      = touchpad  ; активная пауза: touchpad menu back l3 r3 lt rt none
+
+Rumble           = 1      ; вибрация
+RumbleStrength   = 100    ; сила в процентах: 0 — тишина, 150 — сильнее
 LogLevel         = 1      ; 0 тишина · 1 обычный лог · 2 подробный
 ```
 
@@ -126,6 +130,21 @@ DualSense/DualShock: это единственная свободная кноп
 `l3`, `r3`, `lt`, `rt` или `none`, если пауза на паде не нужна. Выбранная кнопка теряет своё
 обычное действие, поэтому имейте в виду, чем жертвуете: L3 — групповой стиль, R3 — переворот
 камеры (и кнопка автонаведения в режиме 2), LT/RT — быстрый и силовой стиль.
+
+### Вибрация
+
+Своей вибрации у игры нет вообще: The Witcher 2007 года про геймпады не знал, и в движке нет ни
+одного вызова на этот счёт. Зато оболочка eON на macOS уже умеет Core Haptics — дорога есть,
+по ней просто никто не ездил. Мод по ней и едет: слушает события движка и сам крутит моторы
+(Core Haptics на macOS, XInput на Windows/Proton).
+
+Что чувствуется: тряска камеры (движок сам говорит, насколько сильная), свой удар по врагу,
+полученный урон — тем сильнее, чем больше потеряно здоровья, ритм серии ударов (короткий тик
+ровно в тот момент, когда игра ждёт следующего нажатия), знаки, дрожь медальона рядом с магией,
+новый уровень и отравление.
+
+Выключается `Rumble = 0` или в игре: Настройки → Игра → «Геймпад: вибрация». Сила —
+`RumbleStrength` в процентах.
 
 ## Steam и проверка целостности
 
@@ -213,6 +232,14 @@ touchpad falls back to **Menu** by itself (Escape is on B anyway). `PauseButton`
 `menu`, `back`, `l3`, `r3`, `lt`, `rt`, or `none`. Whichever you pick gives up its usual job --
 L3 is the group style, R3 the camera flip (and the aim button in mode 2), LT/RT the fast and
 strong styles.
+
+**Rumble:** the game has none of its own -- a 2007 PC title with not one vibration call in it --
+but eON already links Core Haptics to emulate DirectInput force feedback, so the road existed and
+nobody drove it. The mod listens to the engine's own events and drives the motors itself (Core
+Haptics on macOS, XInput on Windows/Proton): camera shakes scaled by how hard the engine says
+they are, blows landed, damage taken scaled by how much was lost, a short tick on the beat of the
+attack chain, signs, the medallion trembling near magic, level-ups. `Rumble = 0` turns it off, or
+Options -> Gameplay in game; `RumbleStrength` is a percentage.
 
 **Caveat:** the mod is all added files plus **one modified stock file**, `System/Scripts/debug.luc`
 — the only script the engine loads unconditionally, which is why it is the entry point. On macOS

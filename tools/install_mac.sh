@@ -94,6 +94,7 @@ fi
 wxp_log_files "$APP/Contents/MacOS/wxp_bridge.dylib" "$BIN" \
               "$SCRIPTS/debug.luc" "$SCRIPTS/wxp_gamepad.luc" "$SCRIPTS/wxp_ui.luc" \
               "$SCRIPTS/wxp_combat.luc" "$SCRIPTS/wxp_settings.luc" "$SCRIPTS/wxp_signwheel.luc" \
+              "$SCRIPTS/wxp_rumble.luc" \
               "$WRITEDIR/gamepad.ini"
 note "codesign: $(codesign -dv "$APP" 2>&1 | tr '\n' ' ')"
 wxp_log_done

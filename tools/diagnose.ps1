@@ -121,7 +121,7 @@ if (-not $Game) {
     if (Test-Path $lfx) { W ("  {0} bytes  {1}" -f (Get-Item $lfx).Length, $lfx) }
     else { W "  MISSING  $lfx   <-- the game loads the bridge from here; rerun the installer" }
     W " -- the script layer --"
-    foreach ($n in @("debug", "wxp_gamepad", "wxp_ui", "wxp_combat", "wxp_settings", "wxp_signwheel")) {
+    foreach ($n in @("debug", "wxp_gamepad", "wxp_ui", "wxp_combat", "wxp_settings", "wxp_signwheel", "wxp_rumble")) {
         $f = Join-Path $Scripts "$n.luc"
         if (Test-Path $f) { W ("  {0} bytes  {1}" -f (Get-Item $f).Length, $f) }
         else { W "  MISSING  $f" }
@@ -152,6 +152,7 @@ if (-not $Game) {
         (Join-Path $Sys  "wxp_state.ini")
         (Join-Path $Sys  "wxp_nav.txt")
         (Join-Path $Sys  "wxp_aim.txt")
+        (Join-Path $Sys  "wxp_rumble.txt")
     )
 }
 

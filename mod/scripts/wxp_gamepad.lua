@@ -263,6 +263,13 @@ function wxp_heartbeat(self)
   -- can hook the enemy feed, so load it on the first tick that has one.
   if wxp_combat == nil and g_GuiInGame ~= nil and wxp_load_combat then wxp_load_combat() end
   if wxp_combat and wxp_mode == "world" then pcall(function() wxp_combat.tick() end) end
+  if wxp_rumble == nil and g_GuiInGame ~= nil and wxp_load_rumble then wxp_load_rumble() end
+  if wxp_rumble then
+    -- The hook needs CNWCModule, which only exists once a module is loaded, so it is retried
+    -- from the tick rather than assumed at load time.
+    if not wxp_rumble.hooked then pcall(function() wxp_rumble.hook() end) end
+    if wxp_mode == "world" then pcall(function() wxp_rumble.tick() end) end
+  end
   poll_state()
   poll_nav()
   poll_cmd()
@@ -385,6 +392,12 @@ function wxp_load_ui()
   local ok2, err2 = pcall(function() g_Lua:PlayFile("wxp_ui") end)
   if not ok2 then wxp_log("ui load failed: " .. tostring(err2)) end
   return wxp_ui ~= nil
+end
+
+function wxp_load_rumble()
+  local ok2, err2 = pcall(function() g_Lua:PlayFile("wxp_rumble") end)
+  if not ok2 then wxp_log("load wxp_rumble FAILED: " .. tostring(err2)) end
+  return wxp_rumble ~= nil
 end
 
 function wxp_load_combat()

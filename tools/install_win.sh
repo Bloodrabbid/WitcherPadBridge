@@ -95,6 +95,7 @@ fi
 wxp_log_files "$SYS/lightfx/wxp/LightFX.dll" \
               "$SCRIPTS/debug.luc" "$SCRIPTS/wxp_gamepad.luc" "$SCRIPTS/wxp_ui.luc" \
               "$SCRIPTS/wxp_combat.luc" "$SCRIPTS/wxp_settings.luc" "$SCRIPTS/wxp_signwheel.luc" \
+              "$SCRIPTS/wxp_rumble.luc" \
               "$GAME/gamepad.ini"
 wxp_log_done
 

@@ -15,6 +15,7 @@
  *   <game>\System\wxp_state.ini Lua -> here: Mode / Panel / Tick
  *   <game>\System\wxp_nav.txt   here -> Lua: "<seq> <intent>"
  *   <game>\System\wxp_aim.txt   Lua -> here: "<seq> <dx> <dy> <ready>"
+ *   <game>\System\wxp_rumble.txt Lua -> here: "<seq> <low> <high> <ms>"
  *
  * Nobody debugging this on a Deck or an Ally can attach to the process, so the log has to answer
  * the questions on its own: where it loaded from, what it derived from that, whether each file it
@@ -39,6 +40,12 @@ typedef struct { WORD  wButtons; BYTE bLeftTrigger, bRightTrigger;
                  SHORT sThumbLX, sThumbLY, sThumbRX, sThumbRY; } WXP_GAMEPAD;
 typedef struct { DWORD dwPacketNumber; WXP_GAMEPAD Gamepad; } WXP_STATE;
 typedef DWORD (WINAPI *PFN_XInputGetState)(DWORD, WXP_STATE*);
+
+/* XINPUT_VIBRATION: two motor speeds, 0..65535. The left one is the heavy low-frequency
+   weight, the right one the light high-frequency one -- which is exactly the pair the rumble
+   channel carries, so nothing has to be translated here. */
+typedef struct { WORD wLeftMotorSpeed, wRightMotorSpeed; } WXP_VIBRATION;
+typedef DWORD (WINAPI *PFN_XInputSetState)(DWORD, WXP_VIBRATION*);
 
 #define PAD_DPAD_UP 0x0001
 #define PAD_DPAD_DOWN 0x0002
@@ -90,6 +97,8 @@ typedef struct {
     float aim_speed;         /* how fast the assist may turn the camera, px per second */
     int   log_level;         /* 0 quiet, 1 normal, 2 every event */
     int   pause_btn;         /* which button toggles active pause; see PAUSE_BTN_* */
+    int   rumble;            /* 0 off, 1 on */
+    float rumble_strength;   /* per cent of whatever Lua asks for */
 } Cfg;
 
 /* Mode 2 exists because the assist turning the camera by itself, unasked, is unpleasant even
@@ -108,7 +117,7 @@ static const char* const PAUSE_BTN_NAMES[] = { "touchpad", "menu", "back",
 
 /* One initialiser, used twice: the live config and the copy to fall back on. */
 #define WXP_CFG_DEFAULTS { 1, 0.20f, 0.16f, 1.7f, 1400.f, 900.f, 700.f, 0, \
-                           1, AIM_BTN_R3, 2200.f, 1, PAUSE_BTN_TOUCHPAD }
+                           1, AIM_BTN_R3, 2200.f, 1, PAUSE_BTN_TOUCHPAD, 1, 100.f }
 static const Cfg g_cfg_defaults = WXP_CFG_DEFAULTS;
 static Cfg       g_cfg          = WXP_CFG_DEFAULTS;
 
@@ -179,6 +188,8 @@ static void cfg_parse(const char* path) {
         else if (!_stricmp(key, "AimAssist"))       g_cfg.aim      = (int)v;
         else if (!_stricmp(key, "AimSpeed"))        g_cfg.aim_speed = v;
         else if (!_stricmp(key, "LogLevel"))        g_cfg.log_level = (int)v;
+        else if (!_stricmp(key, "Rumble"))          g_cfg.rumble    = (int)v;
+        else if (!_stricmp(key, "RumbleStrength"))  g_cfg.rumble_strength = v;
     }
     fclose(f);
 }
@@ -211,7 +222,8 @@ static void load_config(int force) {
          g_cfg.aim_speed, g_cfg.log_level,
          has_a ? "gamepad.ini" : "no gamepad.ini",
          has_b ? " + wxp_config.ini" : "");
-    wlog("config: active pause on %s", PAUSE_BTN_NAMES[g_cfg.pause_btn]);
+    wlog("config: active pause on %s   rumble=%d strength=%.0f%%",
+         PAUSE_BTN_NAMES[g_cfg.pause_btn], g_cfg.rumble, g_cfg.rumble_strength);
 }
 
 /* --------------------------------------------------------------- Lua channels */
@@ -267,6 +279,42 @@ static void poll_aim(void) {
     g_aim_py   += ay;
     g_aim_ready = (n >= 4) ? ready : 1;
     g_aim_fresh = GetTickCount();
+}
+
+/* Rumble. Lua writes "<seq> <low> <high> <ms>" with the motors at 0..1000; the bridge starts
+   the pulse and remembers when to stop it, because XInput vibration is a level, not an event --
+   set it and forget it and the pad buzzes until the game exits. */
+static char   g_rum_path[WXP_PATH];
+static DWORD  g_rum_seq;
+static DWORD  g_rum_until;        /* GetTickCount deadline, 0 when the motors are already off */
+static int    g_rum_running;
+
+static void poll_rumble(PFN_XInputSetState set, int slot) {
+    if (!set || slot < 0) return;
+    WXP_VIBRATION v;
+    if (g_rum_running && GetTickCount() >= g_rum_until) {
+        v.wLeftMotorSpeed = v.wRightMotorSpeed = 0;
+        set((DWORD)slot, &v);
+        g_rum_running = 0;
+    }
+    if (!g_cfg.rumble || !g_rum_path[0]) return;
+    FILE* f = fopen(g_rum_path, "r");
+    if (!f) return;
+    unsigned long seq = 0; int lo = 0, hi = 0, ms = 0;
+    int n = fscanf(f, "%lu %d %d %d", &seq, &lo, &hi, &ms);
+    fclose(f);
+    if (n < 4 || (DWORD)seq == g_rum_seq) return;
+    g_rum_seq = (DWORD)seq;
+    lo = lo < 0 ? 0 : (lo > 1000 ? 1000 : lo);
+    hi = hi < 0 ? 0 : (hi > 1000 ? 1000 : hi);
+    ms = ms < 10 ? 10 : (ms > 2000 ? 2000 : ms);
+    float scale = g_cfg.rumble_strength / 100.0f;
+    v.wLeftMotorSpeed  = (WORD)(lo * 65.535f * scale);
+    v.wRightMotorSpeed = (WORD)(hi * 65.535f * scale);
+    set((DWORD)slot, &v);
+    g_rum_until   = GetTickCount() + (DWORD)ms;
+    g_rum_running = 1;
+    wlogv("rumble: %d/%d for %d ms", lo, hi, ms);
 }
 
 static void poll_lua_state(void) {
@@ -361,12 +409,18 @@ static float axis(SHORT s) { return (float)s / 32767.f; }
 static DWORD WINAPI worker(LPVOID unused) {
     (void)unused;
     PFN_XInputGetState XInputGetState = NULL;
+    PFN_XInputSetState XInputSetState = NULL;
     const char* names[] = { "xinput1_4.dll", "xinput1_3.dll", "xinput9_1_0.dll", "xinput1_2.dll" };
     for (int i = 0; i < 4 && !XInputGetState; i++) {
         HMODULE m = LoadLibraryA(names[i]);
         if (m) {
             XInputGetState = (PFN_XInputGetState)(void*)GetProcAddress(m, "XInputGetState");
-            if (XInputGetState) wlog("xinput: %s", names[i]);
+            if (XInputGetState) {
+                /* xinput9_1_0 has no vibration at all; that is a missing feature, not a
+                   failure, so say so once and carry on without it. */
+                XInputSetState = (PFN_XInputSetState)(void*)GetProcAddress(m, "XInputSetState");
+                wlog("xinput: %s (vibration %s)", names[i], XInputSetState ? "yes" : "not exported");
+            }
         }
     }
     if (!XInputGetState) {
@@ -398,6 +452,7 @@ static DWORD WINAPI worker(LPVOID unused) {
         if ((tick % 250) == 0) load_config(0);
         if ((tick % 25) == 0) poll_lua_state();
         if ((tick % 5)  == 0) poll_aim();
+        if ((tick % 5)  == 2) poll_rumble(XInputSetState, slot);
 
         ZeroMemory(want, sizeof want);
         WXP_STATE st;
@@ -761,6 +816,7 @@ static void derive_paths(void) {
     snprintf(g_state_path, sizeof g_state_path, "%s\\System\\wxp_state.ini", g_root);
     snprintf(g_nav_path,   sizeof g_nav_path,   "%s\\System\\wxp_nav.txt", g_root);
     snprintf(g_aim_path,   sizeof g_aim_path,   "%s\\System\\wxp_aim.txt", g_root);
+    snprintf(g_rum_path,   sizeof g_rum_path,   "%s\\System\\wxp_rumble.txt", g_root);
     snprintf(g_log_path,   sizeof g_log_path,   "%s\\System\\wxp_bridge.log", g_root);
 }
 

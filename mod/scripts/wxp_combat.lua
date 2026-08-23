@@ -121,6 +121,9 @@ function C.hook()
   C.hooked = true
   function CGuiInGame:OnGuiEvent(s, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15)
     pcall(function() C.on_event(s, a1) end)
+    -- One wrapper, two readers: vibration wants a different set of these events, and wrapping
+    -- OnGuiEvent a second time would deliver everything twice.
+    pcall(function() if wxp_rumble then wxp_rumble.on_event(s, a1, a2) end end)
     return orig(self, s, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15)
   end
   log("gui event hook installed")

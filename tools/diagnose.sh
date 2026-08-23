@@ -115,7 +115,7 @@ else
     if [ -f "$f" ]; then line "  $(wc -c < "$f" | tr -d ' ') bytes  $f"; else line "  absent  $f"; fi
   done
   line " -- the script layer --"
-  for n in debug wxp_gamepad wxp_ui wxp_combat wxp_settings wxp_signwheel; do
+  for n in debug wxp_gamepad wxp_ui wxp_combat wxp_settings wxp_signwheel wxp_rumble; do
     f="$SCRIPTS/$n.luc"
     if [ -f "$f" ]; then line "  $(wc -c < "$f" | tr -d ' ') bytes  $f"; else line "  MISSING  $f"; fi
   done
@@ -144,7 +144,7 @@ else
 
   h "config and channels"
   grab config "$GAME/gamepad.ini" "$SYS/wxp_config.ini" \
-              "$SYS/wxp_state.ini" "$SYS/wxp_nav.txt" "$SYS/wxp_aim.txt"
+              "$SYS/wxp_state.ini" "$SYS/wxp_nav.txt" "$SYS/wxp_aim.txt" "$SYS/wxp_rumble.txt"
 fi
 
 if [ "$(uname -s)" = "Darwin" ]; then

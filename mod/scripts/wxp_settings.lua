@@ -144,6 +144,13 @@ local ok, err = pcall(function()
            { "L3", "L3" },           { "R3", "R3" },       { "LT", "LT" },
            { "RT", "RT" },           { "none", "нет" } })
 
+  -- Vibration. The game has none of its own -- there is not a rumble call anywhere in it -- so
+  -- everything the pad does is our doing, which makes an off switch the polite minimum.
+  define("WxpGamepadRumble", "Rumble",
+         "Gamepad: vibration", "Геймпад: вибрация", "check", 0, 1, 1)
+  define("WxpGamepadRumbleStr", "RumbleStrength",
+         "Gamepad: vibration strength", "Геймпад: сила вибрации", "range", 0, 150, 100)
+
   cfg_write()
   log("registered " .. table.getn(wxp_settings) .. " settings")
 end)
