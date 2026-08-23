@@ -477,6 +477,78 @@ local function build_settings(sp, label)
   end
 end
 
+-- The key-binding screen builds its rows at runtime onto a scroll view's content panel rather
+-- than onto the screen, and keeps them in lm_pItems in layout order -- two cells per action, the
+-- main binding and the alternate. The generic collector walks a panel's own m_Controls, so it
+-- never saw a single one of them: the pad could reach the five category buttons at the top and
+-- the three at the bottom, and nothing in between. That is what "не даёт крестиком менять" was.
+local function build_bindings(cp, label)
+  local items = cp.lm_pItems
+  if type(items) ~= "table" then return end
+  local list, row, lasty = {}, 0, nil
+  for i = 1, table.getn(items) do
+    local it = items[i]
+    local ctl = it.Control
+    local x, y
+    if ctl ~= nil then
+      local okm, m = pcall(function() return ctl.m_pModel:GetPosition() end)
+      if okm and m and (m.x ~= 0 or m.y ~= 0) then x, y = m.x, m.y else x, y = pos_of(ctl) end
+    end
+    if x then
+      -- PostInitialize lays the rows out top to bottom, so a change in y is a new line. The
+      -- line number is what the scroll bar is driven by; the two cells on it share it.
+      if lasty == nil or math.abs(y - lasty) > 0.01 then row = row + 1 lasty = y end
+      local e = {c = ctl, x = x, y = y, row = row}
+
+      -- Waiting for a key, as opposed to waiting for the confirmation dialog that clearing a
+      -- binding raises: lm_bKeyCaught is how the panel itself tells those apart, and stepping
+      -- on the second one would cancel the very thing the player is about to confirm.
+      local function armed()
+        return cp.lm_pActiveItem ~= nil and rawequal(cp.lm_pActiveItem, it)
+               and cp.lm_bKeyCaught == false
+      end
+      local function disarm()
+        if not armed() then return false end
+        pcall(function() cp:CancelBinding() end)
+        pcall(function() g_pGuiMan:SetDoKeyBindCapture(false) end)
+        return true
+      end
+
+      -- Selecting a cell arms the engine's own key capture, exactly as a mouse click does, so
+      -- the key still has to come from the keyboard: a pad has no letters to offer, and this
+      -- screen binds engine key ids, not pad buttons. Reading the list and clearing a binding
+      -- are the parts that are actually pad work, and those now are.
+      e.act = function() cp:OnButtonClick(it.Name) end
+      -- Input id 10 is what the capture treats as "delete this binding". Going through it
+      -- rather than calling RemoveBinding directly means the player gets the same confirmation
+      -- the mouse would raise -- and that popup is one the focus layer already answers.
+      e.alt = function()
+        cp:OnButtonClick(it.Name)
+        cp:BindControl(10)
+      end
+      e.esc = disarm
+      e.hi = function(on)
+        -- Stepping off a cell that is still waiting would leave the engine listening on behalf
+        -- of a row the player has already left.
+        if not on then disarm() end
+        pcall(function() if on then ctl:OnMouseEnter() else ctl:OnMouseLeave() end end)
+      end
+      table.insert(list, e)
+    end
+  end
+  seg(label .. ".bindings", list, nil, cp.lm_pScrollView)
+  local sec = U.sections[table.getn(U.sections)]
+  if sec and sec.name == label .. ".bindings" then
+    sec.nrows = row
+    -- Two columns, so left/right has to mean "the other binding for this action" -- which is
+    -- coordinate stepping, not index stepping. But the coordinates are the content panel's, so
+    -- the section is a band to everything outside it and is entered through this anchor.
+    sec.band = true
+    local ax, ay = pos_of(cp.lm_pScrollView)
+    if ax then sec.ax, sec.ay = ax, ay end
+  end
+end
+
 -- The character screen's left column is a set of plain models, not buttons: the game wires
 -- them up through g_GuiLayoutManager button actions, and picking one means calling
 -- SetTraitActive on the hero panel.
@@ -581,7 +653,10 @@ local function build_generic(obj, label)
     collect_from(sub, list, label .. "." .. nice)
     seg(label .. "." .. nice, list)
     if sub.lm_SettingSets then build_settings(sub, label .. "." .. nice)
-    else build_settings_tabs(sub, label .. "." .. nice) end
+    else
+      build_settings_tabs(sub, label .. "." .. nice)
+      if type(sub.lm_pItems) == "table" then build_bindings(sub, label .. "." .. nice) end
+    end
     -- one more level: sub-panels of sub-panels (lists inside a tab, for instance)
     local deep = sub_panels(sub)
     for j = 1, table.getn(deep) do
@@ -687,9 +762,15 @@ local function scroll_to(sec, pos)
   pcall(function()
     local sb = sv.lm_pScrollBar
     local n = table.getn(sec.items)
+    local idx = pos
+    -- A section laid out in columns scrolls by line: the key-binding screen puts two cells on
+    -- every row, so stepping the bar per entry would move it twice as far as the focus went
+    -- and run out of travel halfway down the list.
+    local e = sec.items[pos]
+    if sec.nrows and e and e.row then n, idx = sec.nrows, e.row end
     local range = sb:GetScrollRange()
     local frac = 0
-    if n > 1 then frac = (pos - 1) / (n - 1) end
+    if n > 1 then frac = (idx - 1) / (n - 1) end
     sb:SetScrollPos(range * frac)
     sv:OnLMouseUp()
   end)
@@ -822,6 +903,14 @@ local function positional(sec)
   return not (sec.list or sec.rows or sec.name == "replies")
 end
 
+-- Positional means "step inside it by coordinates". A band is positional inside but keeps its
+-- own coordinate space -- the key-binding cells sit on a scroll view's content panel, whose
+-- origin has nothing to do with the screen's -- so crossing into or out of one has to go
+-- through the section's anchor, the same way a list does.
+local function crossable(sec)
+  return positional(sec) and not sec.band
+end
+
 -- Leaving the current section in the direction the player pushed. Without this the ring is a
 -- set of islands and half the screen is only reachable through the shoulder buttons, which is
 -- exactly the thing that reads as broken -- the stick should get everywhere.
@@ -829,7 +918,7 @@ local function move_across(dx, dy)
   local sec = U.sections[U.si]
   if sec == nil then return nil end
   local ox, oy
-  if positional(sec) and U.focus_entry and U.focus_entry.x then
+  if crossable(sec) and U.focus_entry and U.focus_entry.x then
     ox, oy = U.focus_entry.x, U.focus_entry.y
   else
     ox, oy = section_anchor(sec)
@@ -852,7 +941,7 @@ local function move_across(dx, dy)
     if si ~= U.si then
       local o = U.sections[si]
       if table.getn(o.items) > 0 then
-        if positional(o) then
+        if crossable(o) then
           for i = 1, table.getn(o.items) do
             local e = o.items[i]
             if e.x then consider(si, e, e.x, e.y) end
@@ -1114,6 +1203,13 @@ end
 function U.alt()
   local c = U.focus
   if c == nil then return "no focus" end
+  local e = U.focus_entry
+  if e and e.alt then
+    local okA, errA = pcall(e.alt)
+    if not okA then return "alt failed: " .. tostring(errA) end
+    U.refresh()
+    return "alt " .. tostring(c.m_Name)
+  end
   pcall(function() c:OnRMouseDown() c:OnRMouseUp() end)
   U.refresh()
   return "alt " .. tostring(c.m_Name)
@@ -1207,6 +1303,13 @@ function U.open(key)
 end
 
 function U.close()
+  -- A cell that is waiting for a key takes the back button for itself: leaving the screen with
+  -- the engine still capturing would swallow the next keypress somewhere else entirely.
+  local fe = U.focus_entry
+  if fe and fe.esc then
+    local okE, handled = pcall(fe.esc)
+    if okE and handled then return U.describe() end
+  end
   U.refresh()
   if U.panel == "Dialog" then return "in dialog" end
   local name = U.panel
