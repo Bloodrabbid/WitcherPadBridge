@@ -976,6 +976,22 @@ function U.refresh()
         })
       end
     end
+    -- Meditation is drawn ON TOP of the character screen and does not cover it: the dial is in
+    -- one corner and the talent tree fills the rest. A player who opens it to sleep off a night
+    -- is just as likely to be there to spend talent points, so both belong in the ring and the
+    -- shoulders step between them. Closing meditation to reach the tree behind it works, but
+    -- only because the pad had no other way of getting there.
+    local hero = g_GuiInGame and g_GuiInGame.lm_pInGameSummaryPanel
+    if hero then
+      local okH, live = pcall(function()
+        if hero.lm_bActive then return true end
+        return hero:IsActive() == true
+      end)
+      if okH and live then
+        build_hero_traits(hero)
+        build_generic(hero, "Hero")
+      end
+    end
   elseif name == "MainMenu" then
     -- While a wizard step is up the menu behind it is not on screen, so its buttons must not be
     -- in the ring at all -- that is the whole complaint.
