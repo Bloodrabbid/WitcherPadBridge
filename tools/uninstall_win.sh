@@ -32,6 +32,7 @@ rm -f "$SYS/lightfx/wxp/LightFX.dll"
 rmdir "$SYS/lightfx/wxp" "$SYS/lightfx" 2>/dev/null || true
 
 say "== таблица скорости шага =="
+# ставился версиями до 0.6; он ничего не менял, но у старых установок остался
 rm -f "$GAME/Data/2DA/CreatureSpeed.2da"
 rmdir "$GAME/Data/2DA" 2>/dev/null || true
 

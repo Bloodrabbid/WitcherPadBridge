@@ -65,10 +65,6 @@ echo "== collecting =="
 cp "$ROOT/bridge/macos/wxp_bridge.dylib"  "$OUT/bridge/macos/"
 cp "$ROOT/bridge/windows/LightFX.dll"     "$OUT/bridge/windows/"
 cp "$ROOT/mod/gamepad.ini"                "$OUT/mod/"
-# The one game data file we ship. Copied, not generated: 2DA tables use CRLF and the engine's
-# parser is the only judge of what it accepts.
-mkdir -p "$OUT/mod/data/2DA"
-cp "$ROOT/mod/data/2DA/CreatureSpeed.2da" "$OUT/mod/data/2DA/"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 for src in "$ROOT"/mod/scripts/*.lua; do
@@ -125,6 +121,9 @@ for f in _log.sh _log.ps1 diagnose.sh diagnose.ps1 diagnose.bat VERSION; do
 done
 echo "   support scripts present"
 
+# zip ДОПИСЫВАЕТ в существующий архив, а не пересоздаёт его: без этой строки файл,
+# убранный из мода, остаётся в релизе от прошлой сборки. Так и уехал CreatureSpeed.2da.
+rm -f "$ROOT/dist/WitcherPadBridge-$VER.zip"
 ( cd "$ROOT/dist" && zip -qr "WitcherPadBridge-$VER.zip" "WitcherPadBridge-$VER" )
 ( cd "$ROOT/dist" && shasum -a 256 "WitcherPadBridge-$VER.zip" > "WitcherPadBridge-$VER.zip.sha256" )
 echo

@@ -137,7 +137,12 @@ DualSense/DualShock: это единственная свободная кноп
 У игры нет клавиши «идти»: `actions.2da` знает только вперёд/назад/вбок, а `startup.lua`
 принудительно включает вечный бег — поэтому Геральт носится даже по комнате. Мод возвращает
 вторую скорость и вешает её на стик: слабое отклонение — шаг, сильное — бег. Замерено на живом
-персонаже: бег 7.5–9.4 единицы в секунду, шаг 2.1–2.5.
+персонаже: бег примерно вчетверо быстрее шага.
+
+Двумя скоростями всё и ограничивается: сделать их плавно-переменными, как в новых играх, нельзя.
+Рантайм-сеттера скорости движок в Lua не отдаёт (есть только «всегда бежать» вкл/выкл), а
+локомоторных анимаций ровно две, без смешивания, — промежуточный темп означал бы едущие по земле
+ноги. Разрыв между шагом и бегом тоже фиксирован: он задан анимациями, а не таблицей.
 
 Порог — `RunThreshold`, доля отклонения стика (0.70 = семь десятых хода). `0` возвращает старое
 поведение «всегда бег». В игре: Настройки → Игра → «Геймпад: бег при отклонении, %».
@@ -165,7 +170,7 @@ DualSense/DualShock: это единственная свободная кноп
 | Что за мод | Куда ставится | Мешает нам? |
 |---|---|---|
 | Текстуры, модели, звуки (HD-паки, ретекстуры) | `Data/…` (`Textures`, `Meshes`; в инструкциях часто пишут `Data/Override`) | **Нет.** Разные файлы, разные каталоги |
-| Таблицы `.2da` (баланс, скорости, предметы) | `Data/2DA/` — так задано в `restype.ini`; игра и сама кладёт пару штук россыпью в `Data/` | **Нет**, если мод не трогает `CreatureSpeed.2da` (её правим мы — см. «Шаг и бег») |
+| Таблицы `.2da` (баланс, скорости, предметы) | `Data/2DA/` — так задано в `restype.ini`; игра и сама кладёт пару штук россыпью в `Data/` | **Нет.** Своих таблиц мод не ставит |
 | Скриптовые моды (например Full Combat Rebalance) | `System/Scripts/*.luc` | **Возможно.** См. ниже |
 
 **Почему со скриптами сложнее.** У скомпилированных скриптов нет каталога перекрытий вообще:
@@ -273,8 +278,11 @@ strong styles.
 **Walk and run:** the game has no walk key -- actions.2da knows only forward, back and strafe --
 and startup.lua turns always-run on, so Geralt sprints across a room. The mod gives the second
 speed back and puts it on the stick: push a little to walk, push far to run. Measured on the live
-character: 7.5-9.4 units per second running against 2.1-2.5 walking. `RunThreshold` is the
-fraction of stick travel where it switches (0.70 by default); `0` restores always-run.
+character, running is about four times walking. `RunThreshold` is the fraction of stick travel
+where it switches (0.70 by default); `0` restores always-run. Two speeds is all there is: the
+engine exposes no runtime speed setter to Lua, only always-run on or off, and there are exactly
+two locomotion animations with no blending between them -- an in-between pace would slide Geralt's
+feet along the ground. The gap between the two is set by those animations, not by a table.
 
 **Rumble:** the game has none of its own -- a 2007 PC title with not one vibration call in it --
 but eON already links Core Haptics to emulate DirectInput force feedback, so the road existed and
@@ -288,8 +296,8 @@ Options -> Gameplay in game; `RumbleStrength` is a percentage.
 `System/witcher.ini`) rather than from forum instructions, which name these paths from memory and
 disagree. Textures, meshes and sounds live under `Data/` (`Textures`, `Meshes`; instructions
 usually say `Data/Override`) and cannot collide with us. Tables go to `Data/2DA/` -- the path
-restype.ini gives -- and only collide if the other mod also ships `CreatureSpeed.2da`, which is
-the one we change. Script mods are the awkward case: compiled scripts have no override directory
+restype.ini gives -- and cannot collide with us either, since we ship no tables of our own.
+Script mods are the awkward case: compiled scripts have no override directory
 at all -- the `LUC` type in restype.ini has no `Path` entry and both `SCRIPTS` aliases point at
 `System/Scripts` -- so every script mod has to overwrite files in place, as we do. We change
 exactly one stock script, `debug.luc`, by one line, so install the other mod first and ours

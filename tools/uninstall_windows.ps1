@@ -61,6 +61,7 @@ foreach ($d in @("lightfx\wxp", "lightfx")) {
 }
 
 Say "== таблица скорости шага =="
+# ставился версиями до 0.6; он ничего не давал, но у старых установок остался
 Remove-Item (Join-Path $Game "Data\2DA\CreatureSpeed.2da") -Force -ErrorAction SilentlyContinue
 $d2 = Join-Path $Game "Data\2DA"
 if ((Test-Path $d2) -and -not (Get-ChildItem $d2 -Force)) { Remove-Item $d2 -Force }

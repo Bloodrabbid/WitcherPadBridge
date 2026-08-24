@@ -21,6 +21,7 @@ fi
 rm -f "$APP/Contents/MacOS/wxp_bridge.dylib"
 
 say "== removing the walk speed table =="
+# shipped by versions up to 0.6; it never changed anything, but old installs still have it
 rm -f "$GAME/Data/2DA/CreatureSpeed.2da"
 rmdir "$GAME/Data/2DA" 2>/dev/null || true
 
