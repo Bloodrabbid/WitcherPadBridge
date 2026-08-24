@@ -2170,3 +2170,64 @@ t:GetCExoStringEntry(i, "Label", "")   t:GetINTEntry(i, "Col", 0)
 Второй раз за сессию решающее свидетельство дал человек, смотревший в экран, а не замер:
 сперва «побежал аки конь» опровергло мой вывод «таблица не работает», потом «Ламберт стал быстрее»
 показало, что строка общая, — этого ни один мой замер скорости игрока показать не мог.
+
+---
+# ✅ WINDOWS-МОСТ ЗАПУЩЕН ВЖИВУЮ — ПОД CROSSOVER, БЕЗ ИГРЫ
+
+Windows-половина не проверялась ни разу и была самым большим риском. Оказалось, её можно
+проверить прямо здесь: CrossOver — это Wine, а мост рассчитан ровно на обычный PE-загрузчик
+Wine (которого у eON нет и быть не может). Игру для этого устанавливать НЕ пришлось.
+
+## Обстановка
+CrossOver 25.0, бутылка `Steam` (шаблон win10_64), macOS 27 на arm64. 32-битные PE тянутся
+новым WoW64 поверх 64-битного хоста — отдельного 32-битного загрузчика больше нет, поэтому
+`lipo` показывает только x86_64, и это не препятствие. `drive_c/windows/syswow64` — 893 файла,
+`xinput1_3/1_4`, `dinput8`, `user32`, `ucrtbase`, `msvcrt` на месте.
+
+## 🔑 Снято допущение про UCRT
+Файлов `api-ms-win-crt-*` в бутылке НОЛЬ — ровно те импорты, из-за которых PE не грузился под
+eON. В журнале стояло «Wine/Proton апісеты UCRT предоставляют» — допущением. Проверено опытом:
+32-битный тест сделал `LoadLibraryA` нашего `LightFX.dll` → **OK, база 0x7BAF0000**, все четыре
+проверенных экспорта (`LFX_Initialize/Release/Update/GetNumDevices`) резолвятся по неукрашенным
+именам. Значит Wine разрешает апісеты своим механизмом в ntdll, без файлов на диске.
+Требование «собирать freestanding» окончательно снято — и теперь по факту, а не по вере.
+
+## 🔑 XInput под Wine щедрее настоящей Windows
+Грузятся ВСЕ четыре: `xinput1_4`, `1_3`, `9_1_0`, `1_2`, и у КАЖДОЙ есть `XInputSetState`.
+На настоящей Windows у `xinput9_1_0` его нет — мост это предусматривает и логирует как
+отсутствующую фичу. Под Wine/Proton вибрация будет работать при любой подхваченной библиотеке.
+
+## Мост поднят полностью (лог из бутылки)
+Разложено фальшивое дерево `C:\wxpgame\System\lightfx\wxp\LightFX.dll` (мост считает корень,
+поднимаясь на 4 уровня) + `gamepad.ini`. Тест держал DLL загруженной 12 секунд:
+```
+==== WitcherPadBridge (Windows) dev, pid 212, 2026-08-24, epoch ... ====
+game root   : C:\wxpgame
+runtime     : Wine/Proton 10.0          <- проба wine_get_version работает
+xinput: xinput1_4.dll (vibration yes)
+config: dzL=0.20 dzR=0.16 sens=1400/900 curve=1.70 invY=0 en=1 menu=700
+config: aim=1 (on attack) aimSpeed=2200 logLevel=2
+config: active pause on touchpad   rumble=1 strength=100%   run threshold=0.70
+System writable: yes
+pad: no controller on any XInput slot.
+```
+То есть проверено вживую: DllMain, самопиннинг, вычисление путей, ротация лога, определение
+среды, дамп окружения, проверка записи в `System`, загрузка XInput, разбор ОБОИХ конфигов
+включая строковый `PauseButton`, `LogLevel=2` без перезапуска, и корректный отчёт об отсутствии
+пада с подсказкой про Steam Input.
+
+## Что осталось непроверенным
+1. Грузит ли САМА игра `System\lightfx\wxp\LightFX.dll` — это её поведение, а не наше;
+   на macOS оно подтверждено логами eON, но под Wine не наблюдалось. Нужна игра в бутылке.
+2. Доходит ли `SendInput` со скан-кодами до Aurora и `SetCursorPos` до камеры. Нужна игра.
+3. Чтение пада через XInput Wine — пад в момент проверки просто не был подключён.
+   Это проверяется БЕЗ игры: воткнуть DualSense и перезапустить тот же тест.
+
+## Как повторить
+```
+B="$HOME/Library/Application Support/CrossOver/Bottles/Steam/drive_c"
+CX=/Applications/CrossOver.app/Contents/SharedSupport/CrossOver/bin
+"$CX/wine" --bottle Steam --workdir 'C:\wxp' --cx-app 'C:\wxp\wxphold.exe'
+cat "$B/wxpgame/System/wxp_bridge.log"
+```
+Артефакты теста лежат в бутылке: `C:\wxp\` (wxptest.exe, wxphold.exe) и `C:\wxpgame\`.
