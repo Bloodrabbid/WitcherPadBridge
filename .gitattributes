@@ -1,0 +1,4 @@
+# 2DA files are the game's own data format and the engine's parser is the only judge of what
+# it accepts. The shipped tables use CRLF; letting git normalise them would hand the game a
+# file that differs from every other 2DA it reads, for no benefit.
+*.2da -text
