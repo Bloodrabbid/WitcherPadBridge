@@ -205,6 +205,8 @@ end
 -- странно работает" -- the stick moved and the screen did not.
 -- SetScale is the one lever the binding does expose, so the focused slot grows instead.
 local SLOT_SCALE = 1.35
+-- Map markers are small icons on a busy bitmap, so they need more than a slot does to read.
+local MARKER_SCALE = 1.6
 local function slot_focus(list)
   for i = 1, table.getn(list) do
     local e = list[i]
@@ -832,6 +834,41 @@ local function build_dialog(dp)
   seg("replies", list)
 end
 
+-- The map is not a grid of controls. Its eighteen controls are the fog layer, the map bitmap
+-- and eleven marker TEMPLATES the engine clones -- none of them respond to anything, and
+-- l_tGuiMapInfo gives handlers to exactly two, both empty. What is actually on the map is
+-- lm_tMarkers, attached to lm_pMarkersPanel at real positions.
+--
+-- So the markers are the ring. For a player who cannot point at the map, "step to the next
+-- thing on it and be told what it is" is the whole of what a map does, and the engine already
+-- hands us the tooltip it would have shown the mouse.
+local function build_map(mp)
+  local list = {}
+  for k, v in pairs(mp.lm_tMarkers or {}) do
+    local c = v.Control
+    if c then
+      local x, y = pos_of(c)
+      local e = {c = c, x = x or 0, y = y or 0, tpl = tostring(v.Template)}
+      e.hi = function(on)
+        pcall(function() c:SetScale(on and MARKER_SCALE or 1.0) end)
+        pcall(function() if on then c:OnMouseEnter() else c:OnMouseLeave() end end)
+        if on then pcall(function() c:OnTooltip() end) end
+      end
+      table.insert(list, e)
+    end
+  end
+  if table.getn(list) == 0 then return false end
+  -- Reading order, so stepping down the map goes down the map. Markers share coordinates with
+  -- each other (one panel, one attachment point), so this is a plain sort, not the two-space
+  -- problem the settings rows had.
+  table.sort(list, function(a, b)
+    if math.abs(a.y - b.y) > 0.2 then return a.y > b.y end
+    return a.x < b.x
+  end)
+  seg("markers", list)
+  return true
+end
+
 -- Panels that can own the screen, most specific first.
 local function open_panel()
   local gi = g_GuiInGame
@@ -1002,6 +1039,10 @@ function U.refresh()
       built = okW and r
     end
     if not built then build_generic(obj, name) end
+  elseif name == "Map" then
+    -- Markers first; the tab strip is added below like every other screen's. If the map has
+    -- nothing on it yet -- a fresh area, fog everywhere -- fall back so the ring is not empty.
+    if not build_map(obj) then build_generic(obj, name) end
   elseif name == "Hero" then build_hero_traits(obj) build_generic(obj, name)
   elseif name == "Inventory" then build_inventory(obj)
   elseif name == "Alchemy" and obj.lm_pRepositoryPanel then build_inventory(obj)

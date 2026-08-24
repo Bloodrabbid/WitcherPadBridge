@@ -1269,12 +1269,24 @@ __attribute__((constructor))
 static void wxp_init(void) {
     /* The bundle names us in its load commands, and a developer may still inject a build over
        the top with DYLD_INSERT_LIBRARIES. Two copies would each drive the pad and every press
-       would land twice, so only the first one to arrive starts a worker. */
-    if (getenv("WXP_BRIDGE_ACTIVE")) {
-        L("---- second copy in pid %d, standing down ----", getpid());
-        return;
+       would land twice, so only the first one to arrive starts a worker.
+
+       The marker carries the pid it was set in, because the launcher re-execs: the first process
+       arms, sets the variable, and hands its whole environment to the real game process, which
+       then saw a bare "1" and stood down -- the mod silently did nothing for the entire session
+       and the only trace was one "second copy" line in the log. Comparing pids makes the marker
+       mean "another copy in THIS process", which is what it was always supposed to mean. */
+    {
+        const char* held = getenv("WXP_BRIDGE_ACTIVE");
+        char mine[16];
+        snprintf(mine, sizeof mine, "%d", getpid());
+        if (held && !strcmp(held, mine)) {
+            L("---- second copy in pid %d, standing down ----", getpid());
+            return;
+        }
+        if (held) L("(inherited an active marker from pid %s -- that was a different process)", held);
+        setenv("WXP_BRIDGE_ACTIVE", mine, 1);
     }
-    setenv("WXP_BRIDGE_ACTIVE", "1", 1);
     log_rotate();
     {   /* Date on the banner: log files get mailed around, and "which run was this" is the first
            thing anyone reading one needs to know. */
