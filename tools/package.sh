@@ -65,6 +65,10 @@ echo "== collecting =="
 cp "$ROOT/bridge/macos/wxp_bridge.dylib"  "$OUT/bridge/macos/"
 cp "$ROOT/bridge/windows/LightFX.dll"     "$OUT/bridge/windows/"
 cp "$ROOT/mod/gamepad.ini"                "$OUT/mod/"
+# The one game data file we ship. Copied, not generated: 2DA tables use CRLF and the engine's
+# parser is the only judge of what it accepts.
+mkdir -p "$OUT/mod/data/2DA"
+cp "$ROOT/mod/data/2DA/CreatureSpeed.2da" "$OUT/mod/data/2DA/"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 for src in "$ROOT"/mod/scripts/*.lua; do

@@ -157,6 +157,32 @@ DualSense/DualShock: это единственная свободная кноп
 Выключается `Rumble = 0` или в игре: Настройки → Игра → «Геймпад: вибрация». Сила —
 `RumbleStrength` в процентах.
 
+## Другие моды: с чем уживаемся
+
+Разложено по тому, что говорит сама игра (`System/restype.ini` и `System/witcher.ini`), а не по
+советам с форумов — там пути называют по памяти и часто по-разному.
+
+| Что за мод | Куда ставится | Мешает нам? |
+|---|---|---|
+| Текстуры, модели, звуки (HD-паки, ретекстуры) | `Data/…` (`Textures`, `Meshes`; в инструкциях часто пишут `Data/Override`) | **Нет.** Разные файлы, разные каталоги |
+| Таблицы `.2da` (баланс, скорости, предметы) | `Data/2DA/` — так задано в `restype.ini`; игра и сама кладёт пару штук россыпью в `Data/` | **Нет**, если мод не трогает `CreatureSpeed.2da` (её правим мы — см. «Шаг и бег») |
+| Скриптовые моды (например Full Combat Rebalance) | `System/Scripts/*.luc` | **Возможно.** См. ниже |
+
+**Почему со скриптами сложнее.** У скомпилированных скриптов нет каталога перекрытий вообще:
+в `restype.ini` у типа `LUC` нет ни одного `Path`, а алиасы `SCRIPTS`/`SCRIPTS2` оба указывают в
+`System/Scripts`. Значит любой скриптовый мод обязан переписывать файлы прямо там — как и мы.
+
+Мы меняем **ровно один** штатный скрипт — `debug.luc`, и добавляем в него одну строку. Конфликт
+возможен только если другой мод меняет тот же файл. Порядок установки: **сначала другой мод,
+потом наш** — тогда наша строка ляжет поверх и точка входа сохранится. Если после этого что-то
+из другого мода отвалилось, значит он тоже правил `debug.luc`; напишите, разберёмся.
+
+Штатный `debug.luc` мы сохраняем в `<игра>/WitcherPadBridge/backup` до всех правок, так что
+откатить можно всегда.
+
+**На macOS текстурные моды не проверялись.** Порт eON транслирует x86-код и DirectX на лету;
+крупные паки туда, скорее всего, встанут, но ручаться не за что — если попробуете, расскажите.
+
 ## Steam и проверка целостности
 
 Мод состоит из добавленных файлов и **одного изменённого штатного** —
@@ -257,6 +283,19 @@ Haptics on macOS, XInput on Windows/Proton): camera shakes scaled by how hard th
 they are, blows landed, damage taken scaled by how much was lost, a short tick on the beat of the
 attack chain, signs, the medallion trembling near magic, level-ups. `Rumble = 0` turns it off, or
 Options -> Gameplay in game; `RumbleStrength` is a percentage.
+
+**Other mods:** taken from what the game says about itself (`System/restype.ini`,
+`System/witcher.ini`) rather than from forum instructions, which name these paths from memory and
+disagree. Textures, meshes and sounds live under `Data/` (`Textures`, `Meshes`; instructions
+usually say `Data/Override`) and cannot collide with us. Tables go to `Data/2DA/` -- the path
+restype.ini gives -- and only collide if the other mod also ships `CreatureSpeed.2da`, which is
+the one we change. Script mods are the awkward case: compiled scripts have no override directory
+at all -- the `LUC` type in restype.ini has no `Path` entry and both `SCRIPTS` aliases point at
+`System/Scripts` -- so every script mod has to overwrite files in place, as we do. We change
+exactly one stock script, `debug.luc`, by one line, so install the other mod first and ours
+second. The stock `debug.luc` is backed up before anything is touched. Texture packs on macOS are
+untested: eON translates x86 and DirectX on the fly, and large packs probably survive that, but
+nobody has checked.
 
 **Caveat:** the mod is all added files plus **one modified stock file**, `System/Scripts/debug.luc`
 — the only script the engine loads unconditionally, which is why it is the entry point. On macOS

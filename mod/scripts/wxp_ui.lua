@@ -869,6 +869,61 @@ local function build_map(mp)
   return true
 end
 
+-- The Enhanced Edition registers exactly one minigame: InitializeMinigames builds
+-- l_tGames = { ["Poker"] = MGPoker:new() } and loads only mg_poker_main, so the four thousand
+-- lines of mg_dices_main and minigame_dices_ex are a prototype that never runs. Poker hides the
+-- whole in-game GUI (PrepareGui calls g_GuiInGame:Hide) and puts up its own CLuaPanels, one per
+-- phase, which is why nothing else in here recognised the screen.
+--
+-- NOT VERIFIED IN A REAL GAME -- there is no dice opponent in the prologue. The button half goes
+-- through the same collector every other screen uses, so it is as sound as those are; the dice
+-- half is new ground and is the part to watch.
+local POKER_GUIS = { {"lm_pGuiSetup", "setup"}, {"lm_pGuiBid", "bid"},
+                     {"lm_pGuiResult", "result"}, {"lm_pGuiStatus", "status"} }
+-- A die is a model in the scene, not a control, so the focus cue has to be geometry.
+local DIE_SCALE = 1.25
+
+local function build_poker(pk)
+  for i = 1, table.getn(POKER_GUIS) do
+    local g = pk[POKER_GUIS[i][1]]
+    -- Every phase panel exists for the whole game and is toggled off when it is not the one on
+    -- screen, exactly like the system screen's content panels -- collecting the hidden ones
+    -- would fill the ring with buttons the player cannot see.
+    if type(g) == "table" and shown(g) then
+      local live = true
+      if g.lm_pPanel then
+        local ok, r = pcall(function() return g.lm_pPanel:IsActive() end)
+        if ok and r == false then live = false end
+      end
+      if live then build_generic(g, "Poker." .. POKER_GUIS[i][2]) end
+    end
+  end
+
+  -- Choosing which dice to re-throw is a click on the die in the 3D scene, so there is no
+  -- control for the collector to find. OnLMouseDown matches the clicked object against each
+  -- die's own model, which means it can be handed that model directly and the engine does the
+  -- rest: selection effect, sound, and the toggle in both directions.
+  -- It refuses outright unless the table camera is up (lm_nCamera == 4), and that is exactly
+  -- when picking dice means anything, so the section comes and goes on its own.
+  if pk.lm_nCamera == 4 and type(pk.tMiniGamesObject) == "table" then
+    local base = NWCANIMBASE_BASE or 255
+    local list = {}
+    for i = 0, 4 do
+      local obj = pk.tMiniGamesObject[i]
+      local model = nil
+      if obj then pcall(function() model = obj:GetModel(base) end) end
+      if model then
+        table.insert(list, {
+          c = model, x = i, y = 0, idx = i + 1,
+          hi  = function(on) pcall(function() model:SetScale(on and DIE_SCALE or 1.0) end) end,
+          act = function() pcall(function() pk:OnLMouseDown(model) end) end,
+        })
+      end
+    end
+    if table.getn(list) > 0 then seg("dice", list) end
+  end
+end
+
 -- Panels that can own the screen, most specific first.
 local function open_panel()
   local gi = g_GuiInGame
@@ -896,6 +951,11 @@ local function open_panel()
   -- tutorial cards at the player constantly and until now the pad could not answer one at all --
   -- the only way out was the mouse. They win over everything below, dialog included, because
   -- that is exactly the case the engine itself handles by toggling the dialog off (ShowTutorialDialog).
+  -- A minigame takes the screen away from the in-game GUI entirely, so it outranks the panels
+  -- below -- none of which are even visible while it runs.
+  if g_MiniGames and g_MiniGames.lm_sGameRunning == "Poker" and g_Poker then
+    return "Poker", g_Poker
+  end
   local tut = gi.lm_pInGameNewTutorialPanel
   if tut then
     local okS, shownT = pcall(function() return tut:IsShown() end)
@@ -1039,6 +1099,7 @@ function U.refresh()
       built = okW and r
     end
     if not built then build_generic(obj, name) end
+  elseif name == "Poker" then build_poker(obj)
   elseif name == "Map" then
     -- Markers first; the tab strip is added below like every other screen's. If the map has
     -- nothing on it yet -- a fresh area, fog everywhere -- fall back so the ring is not empty.
@@ -1481,6 +1542,10 @@ local function panel_ops(key)
     return function() end, function() gi.lm_pInGameNewSexCardPanel:ToggleOff() end
   elseif key == "rest" then
     return function() end, function() gi.lm_pInGameNewRestPanel:ToggleOff() end
+  elseif key == "poker" then
+    -- The minigame is not something the pad opens; the game starts it from a conversation.
+    -- Backing out is the engine's own escape path, which asks for confirmation where it should.
+    return function() end, function() g_Poker:OnKeyboardEsc() end
   end
   if key == "inventory" then
     return function() gi.lm_pNewInventoryPanel:ShowIndependent() end,
@@ -1503,7 +1568,7 @@ end
 local PANEL_KEY = {
   Inventory = "inventory", Alchemy = "alchemy", Diary = "diary",
   Hero = "hero", Map = "map", System = "system",
-  Tutorial = "tutorial", Card = "card", Rest = "rest"
+  Tutorial = "tutorial", Card = "card", Rest = "rest", Poker = "poker"
 }
 
 function U.open(key)

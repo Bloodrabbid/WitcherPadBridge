@@ -60,6 +60,11 @@ foreach ($d in @("lightfx\wxp", "lightfx")) {
     if ((Test-Path $p) -and -not (Get-ChildItem $p -Force)) { Remove-Item $p -Force }
 }
 
+Say "== таблица скорости шага =="
+Remove-Item (Join-Path $Game "Data\2DA\CreatureSpeed.2da") -Force -ErrorAction SilentlyContinue
+$d2 = Join-Path $Game "Data\2DA"
+if ((Test-Path $d2) -and -not (Get-ChildItem $d2 -Force)) { Remove-Item $d2 -Force }
+
 Say "== Lua-слой =="
 Get-ChildItem (Join-Path $Scripts "wxp_*.luc") -ErrorAction SilentlyContinue | Remove-Item -Force
 $saved = Join-Path $Backup "debug.luc"

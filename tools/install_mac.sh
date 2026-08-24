@@ -62,6 +62,15 @@ PLIST
 codesign --force --sign - --options runtime --entitlements "$ENT" --timestamp=none "$APP"
 rm -f "$ENT"
 
+say "== walk speed table =="
+# The game has no walk key and startup.lua turns always-run on, so the walk rate in the stock
+# table is never reached by an unmodded game -- this only takes effect when the pad asks Geralt
+# to walk. restype.ini maps 2DA to OVERRIDE:\\2DA, and OVERRIDE is the game's Data directory.
+mkdir -p "$GAME/Data/2DA"
+cp "$HERE/../mod/data/2DA/CreatureSpeed.2da" "$GAME/Data/2DA/" 2>/dev/null \
+  || cp "$HERE/mod/data/2DA/CreatureSpeed.2da" "$GAME/Data/2DA/" 2>/dev/null \
+  || say "   (CreatureSpeed.2da not in the package -- walking stays at the stock rate)"
+
 say "== installing the Lua layer =="
 # debug.luc is a shipped file and our only entry point: it is the one script the engine loads
 # unconditionally, before the GUI exists. Back up the stock copy before replacing it.

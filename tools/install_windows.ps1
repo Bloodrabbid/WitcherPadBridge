@@ -80,6 +80,15 @@ $lfx = Join-Path $Sys "lightfx\wxp"
 New-Item -ItemType Directory -Force -Path $lfx | Out-Null
 Copy-Item $Dll (Join-Path $lfx "LightFX.dll") -Force
 
+Say "== таблица скорости шага =="
+# Немодифицированная игра до этой строки таблицы не доходит: клавиши «идти» нет, а startup.lua
+# включает вечный бег. Она нужна только когда шаг просит пад.
+$Data2da = Join-Path $Game "Data\2DA"
+New-Item -ItemType Directory -Force -Path $Data2da | Out-Null
+$SpeedSrc = Join-Path $Root "mod\data\2DA\CreatureSpeed.2da"
+if (Test-Path $SpeedSrc) { Copy-Item $SpeedSrc $Data2da -Force }
+else { Say "   (CreatureSpeed.2da нет в пакете - шаг останется штатным)" }
+
 Say "== Lua-слой =="
 $luc = @(Get-ChildItem (Join-Path $Root "mod\scripts\*.luc") -ErrorAction SilentlyContinue)
 if ($luc.Count -eq 0) { Fail "в mod\scripts нет .luc - соберите пакет через tools/package.sh" }

@@ -77,6 +77,14 @@ say "== мост =="
 mkdir -p "$SYS/lightfx/wxp"
 cp "$DLL" "$SYS/lightfx/wxp/LightFX.dll"
 
+say "== таблица скорости шага =="
+# У игры нет клавиши «идти», а startup.lua включает вечный бег, поэтому до этой строки таблицы
+# немодифицированная игра просто не доходит: она нужна только когда шаг просит пад.
+mkdir -p "$GAME/Data/2DA"
+cp "$HERE/../mod/data/2DA/CreatureSpeed.2da" "$GAME/Data/2DA/" 2>/dev/null \
+  || cp "$HERE/mod/data/2DA/CreatureSpeed.2da" "$GAME/Data/2DA/" 2>/dev/null \
+  || say "   (CreatureSpeed.2da нет в пакете — шаг останется штатным)"
+
 say "== Lua-слой =="
 n=0
 for f in "$ROOT"/mod/scripts/*.luc; do

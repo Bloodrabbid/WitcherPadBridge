@@ -31,6 +31,10 @@ say "== мост =="
 rm -f "$SYS/lightfx/wxp/LightFX.dll"
 rmdir "$SYS/lightfx/wxp" "$SYS/lightfx" 2>/dev/null || true
 
+say "== таблица скорости шага =="
+rm -f "$GAME/Data/2DA/CreatureSpeed.2da"
+rmdir "$GAME/Data/2DA" 2>/dev/null || true
+
 say "== Lua-слой =="
 rm -f "$SCRIPTS"/wxp_*.luc
 if [ -f "$BACKUP/debug.luc" ]; then

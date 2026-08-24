@@ -20,6 +20,10 @@ else
 fi
 rm -f "$APP/Contents/MacOS/wxp_bridge.dylib"
 
+say "== removing the walk speed table =="
+rm -f "$GAME/Data/2DA/CreatureSpeed.2da"
+rmdir "$GAME/Data/2DA" 2>/dev/null || true
+
 say "== removing the Lua layer =="
 SCRIPTS="$GAME/System/Scripts"
 rm -f "$SCRIPTS"/wxp_*.luc
