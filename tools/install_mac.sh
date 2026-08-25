@@ -62,9 +62,6 @@ PLIST
 codesign --force --sign - --options runtime --entitlements "$ENT" --timestamp=none "$APP"
 rm -f "$ENT"
 
-say "== walk speed table =="
-# The game has no walk key and startup.lua turns always-run on, so the walk rate in the stock
-
 say "== installing the Lua layer =="
 # debug.luc is a shipped file and our only entry point: it is the one script the engine loads
 # unconditionally, before the GUI exists. Back up the stock copy before replacing it.
