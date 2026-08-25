@@ -76,8 +76,10 @@ for src in "$ROOT"/mod/scripts/*.lua; do
   "$LUAC" -o "$OUT/mod/scripts/$m.luc" "$STAGE/$m.lua" || { echo "   FAILED to compile $m.lua"; exit 1; }
   echo "   compiled $m.luc"
 done
+mkdir -p "$OUT/mod/extras/bigger-text"
+cp "$ROOT"/mod/extras/bigger-text/*.2da  "$OUT/mod/extras/bigger-text/"
 cp "$ROOT/README.md"                      "$OUT/"
-for f in _game_mac.sh _log.sh _log.ps1 install_mac.sh uninstall_mac.sh inject_loadcmd.py \
+for f in _game_mac.sh _log.sh _log.ps1 install_mac.sh uninstall_mac.sh inject_loadcmd.py bigger_text.sh \
          install_win.sh uninstall_win.sh \
          install_windows.ps1 uninstall_windows.ps1 install_windows.bat uninstall_windows.bat \
          diagnose.sh diagnose.ps1 diagnose.bat; do
