@@ -204,6 +204,39 @@ end
 -- between two different focused slots came back empty. That is what read as "меню снаряжения
 -- странно работает" -- the stick moved and the screen did not.
 -- SetScale is the one lever the binding does expose, so the focused slot grows instead.
+-- Подсказка рисуется у КУРСОРА, а в режиме кольца фокуса курсор припаркован в углу и не
+-- двигается -- поэтому она встаёт на одно и то же место и закрывает собой то, что под ним.
+-- Сдвинуть её в принципе можно -- CGuiMan:ShowTooltip принимает точку, а панель считает от
+-- неё и лишь прижимает к краю экрана, -- но одно фиксированное место хорошо ровно на одном
+-- экране: в инвентаре свободен низ, в дневнике он занят. Поэтому сначала простое и верное:
+-- подсказка живёт заданное число секунд после появления и уходит. 0 -- не гасить.
+local TIP_SECS_DEFAULT = 4
+
+function U.tip(c)
+  pcall(function() c:OnTooltip() end)
+  U.tip_at = os.clock()
+end
+
+local function tip_secs()
+  local v = TIP_SECS_DEFAULT
+  pcall(function()
+    local o = wxp_settings_by_key and wxp_settings_by_key.TooltipHide
+    if o then v = o:GetValue() end
+  end)
+  return v
+end
+
+-- Зовётся с каждого heartbeat, пока открыта панель.
+function U.tick()
+  if U.tip_at == nil then return end
+  local secs = tip_secs()
+  if secs <= 0 then return end
+  if os.clock() - U.tip_at < secs then return end
+  U.tip_at = nil
+  pcall(function() g_pGuiMan:HideTooltip() end)
+  pcall(function() g_pGuiMan:HideTooltipText() end)
+end
+
 local SLOT_SCALE = 1.35
 -- Map markers are small icons on a busy bitmap, so they need more than a slot does to read.
 local MARKER_SCALE = 1.6
@@ -217,7 +250,7 @@ local function slot_focus(list)
     e.hi = function(on)
       pcall(function() c:SetScale(on and SLOT_SCALE or 1.0) end)
       pcall(function() if on then c:OnMouseEnter() else c:OnMouseLeave() end end)
-      if on then pcall(function() c:OnTooltip() end) end
+      if on then U.tip(c) end
     end
   end
 end
@@ -480,7 +513,7 @@ local function build_settings(sp, label)
               end)
             end
             pcall(function() if on then ctl:OnMouseEnter() else ctl:OnMouseLeave() end end)
-            if on then pcall(function() ctl:OnTooltip() end) end
+            if on then U.tip(ctl) end
           end
         end
         e.ord = ord
@@ -821,7 +854,7 @@ local function build_dialog(dp)
       -- Bare icon, no text: the tooltip is the only thing that says what it does.
       hi = function(on)
         pcall(function() if on then c:OnMouseEnter() else c:OnMouseLeave() end end)
-        if on then pcall(function() c:OnTooltip() end) end
+        if on then U.tip(c) end
       end,
       act = function()
         -- The mouse path, so the engine raises OnClick itself; the closure AddReplyText put
@@ -852,7 +885,7 @@ local function build_map(mp)
       e.hi = function(on)
         pcall(function() c:SetScale(on and MARKER_SCALE or 1.0) end)
         pcall(function() if on then c:OnMouseEnter() else c:OnMouseLeave() end end)
-        if on then pcall(function() c:OnTooltip() end) end
+        if on then U.tip(c) end
       end
       table.insert(list, e)
     end
@@ -993,7 +1026,7 @@ local function highlight(e, on)
     if on then
       if c.HilightSlot then c:HilightSlot(true) end
       c:OnMouseEnter()
-      if c.OnTooltip then c:OnTooltip() end
+      if c.OnTooltip then U.tip(c) end
     else
       if c.UnhilightSlot then c:UnhilightSlot(true) end
       c:OnMouseLeave()

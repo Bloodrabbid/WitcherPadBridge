@@ -263,6 +263,8 @@ function wxp_heartbeat(self)
   -- can hook the enemy feed, so load it on the first tick that has one.
   if wxp_combat == nil and g_GuiInGame ~= nil and wxp_load_combat then wxp_load_combat() end
   if wxp_combat and wxp_mode == "world" then pcall(function() wxp_combat.tick() end) end
+  -- Гасим засидевшуюся подсказку. Только в панели: в мире её никто не показывает.
+  if wxp_ui and wxp_ui.tick and wxp_mode ~= "world" then pcall(function() wxp_ui.tick() end) end
   if wxp_rumble == nil and g_GuiInGame ~= nil and wxp_load_rumble then wxp_load_rumble() end
   if wxp_rumble then
     -- The hook needs CNWCModule, which only exists once a module is loaded, so it is retried

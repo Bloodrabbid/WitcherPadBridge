@@ -35,6 +35,9 @@ end
 
 -- name -> { setting object, ini key, how the slider value maps to the ini value }
 wxp_settings = {}
+-- то же самое, но адресуемое по ключу ini: Lua-слою нужно спрашивать значения у себя,
+-- а не только выгружать их в конфиг для моста.
+wxp_settings_by_key = {}
 
 local function cfg_write()
   local f = io.open(CFG, "w")
@@ -91,6 +94,7 @@ local function define(class_name, key, label_en, label_ru, kind, lo, hi, default
   pcall(function() obj:Read() end)
   if not stored then pcall(function() obj:SetValue(default, nil) end) end
   table.insert(wxp_settings, {obj = obj, key = key, map = map})
+  wxp_settings_by_key[key] = obj
   return obj
 end
 
@@ -156,6 +160,13 @@ local ok, err = pcall(function()
          "Gamepad: vibration", "Геймпад: вибрация", "check", 0, 1, 1)
   define("WxpGamepadRumbleStr", "RumbleStrength",
          "Gamepad: vibration strength", "Геймпад: сила вибрации", "range", 0, 150, 100)
+
+  -- Подсказка встаёт у курсора, а курсор в кольце фокуса не двигается, поэтому она закрывает
+  -- собой то, что под ней, и висит, пока фокус не уйдёт. Гасим по времени; 0 -- не гасить.
+  define("WxpGamepadTipHide", "TooltipHide",
+         "Gamepad: hide tooltip after, s", "Геймпад: прятать подсказку через, с",
+         "range", 0, 10, 4, nil,
+         { { "never", "не прятать" } })
 
   cfg_write()
   log("registered " .. table.getn(wxp_settings) .. " settings")
