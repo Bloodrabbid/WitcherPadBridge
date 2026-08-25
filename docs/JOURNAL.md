@@ -2231,3 +2231,76 @@ CX=/Applications/CrossOver.app/Contents/SharedSupport/CrossOver/bin
 cat "$B/wxpgame/System/wxp_bridge.log"
 ```
 Артефакты теста лежат в бутылке: `C:\wxp\` (wxptest.exe, wxphold.exe) и `C:\wxpgame\`.
+
+---
+# ✅✅ WINDOWS/PROTON РАБОТАЕТ НА ЖИВОМ ЖЕЛЕЗЕ (ROG Ally X, Bazzite)
+
+Последняя недоказанная опора проекта закрыта. Установка по SSH, Bazzite 43 (Kinoite),
+kernel 6.17.7, Proton 11.0, appid 20900, игра в `~/.local/share/Steam/steamapps/common/`.
+
+## 🔴 БЛОКЕР, КОТОРОГО НИКТО НЕ ЖДАЛ: игра не грузила DLL из-за ВЕРСИИ WINDOWS
+Первый запуск: Lua-слой поднялся идеально, а `wxp_bridge.log` не появился вовсе.
+Причина нашлась в строках `witcher.exe`:
+```
+lightfx\%s\LightFX.dll
+Unable to connect to LightFX.dll. Path: '%s', GetLastError() returned: 0x%x
+Not supported version of Windows!            <-- вот оно
+No lightfx.2da present.
+```
+`%s` — имя папки по версии Windows (SDK AlienFX возил свои DLL по папкам под каждую ОС;
+на macOS eON представляется XP, поэтому там путь и был `lightfx\wxp\`). Префикс Proton
+представляется **Windows 10 Pro build 19045**, игра 2007 года такую версию не знает, пишет
+«Not supported version of Windows!» и до построения пути ВООБЩЕ НЕ ДОХОДИТ.
+
+**Лечение — оверрайд версии только для одного exe**, остальной префикс остаётся десяткой.
+В `compatdata/20900/pfx/user.reg`:
+```
+[Software\\Wine\\AppDefaults\\witcher.exe] <время>
+#time=...
+"Version"="winxp"
+```
+🔴 Правку делать ТОЛЬКО при закрытой игре: wineserver при выходе перезаписывает `user.reg`
+своей копией и правка потеряется.
+Подтверждение в логе моста после перезапуска: `reported ver: 5.1 build 2600` (было 6.2/10.0).
+
+Это ОБЯЗАТЕЛЬНЫЙ шаг установки на Proton, а не местная особенность — он следует из кода самой
+игры. Должен уехать в установщик и README.
+
+## Что подтверждено логом моста (ROG Ally X, живой прогон)
+```
+==== WitcherPadBridge (Windows) 0.6-rc1, pid 316 ====
+loaded from : S:\common\The Witcher Enhanced Edition\System\lightfx\wxp\LightFX.dll
+game root   : S:\common\The Witcher Enhanced Edition
+runtime     : Wine/Proton 11.0
+reported ver: 5.1 build 2600
+System writable: yes
+xinput: xinput1_4.dll (vibration yes)
+config: ... (gamepad.ini + wxp_config.ini)     <-- оба конфига, вкладка тоже
+lua: state file seen -- the script layer is installed and ticking
+pad: connected on slot 0
+nav: 1 down / 2 up / ...
+```
+- **Игра сама грузит наш DLL** своим механизмом LightFX — без инжектора, без патча exe.
+  На macOS этот путь невозможен в принципе (см. разбор VPFS), здесь он живой.
+- **Proton отдаёт игре диск `S:`** — корень игры вычислился как `S:\common\The Witcher...`,
+  то есть подъём на 4 уровня от пути DLL отработал на непривычной раскладке дисков.
+- Пад виден на слоте 0, `xinput1_4` с вибрацией.
+- Обе половины видят друг друга: мост читает `wxp_state.ini`, Lua читает `wxp_nav.txt`.
+- Навигация с креста дошла до экрана загрузки и листает список сейвов:
+  `Section=System.InGameNewSystemLoadPanel:ScrollView`,
+  `Focus=ListButton_39_Дом Трисс 2016/09/14 23:32:19_For_ScrollView`.
+
+## Lua-слой на Proton — с холодного старта, без единой правки
+```
+==== WitcherPadBridge Lua layer 0.6-rc1 ====
+cfg: registered 14 settings
+hook installed: OnHeartbeat / TogglePanel / OnPostAttachmentInitialize / SwitchPanel
+```
+Те же `.luc`, собранные нашим пропатченным luac, исполняются и на eON, и на Proton.
+
+## Обстановка на Ally
+- Пад системе виден как `Microsoft X-Box 360 pad` (плюс js0..js2).
+- **Steam Input для игры надо выключать**: у The Witcher нет штатной поддержки пада, поэтому
+  Steam накидывает шаблон «клавиатура и мышь» и шлёт в игру клавиши вместо XInput.
+- SSH на Bazzite выключен по умолчанию (`systemctl enable --now sshd`), `~/.ssh` создаётся руками,
+  и на Fedora Atomic не забыть `restorecon -R ~/.ssh` — иначе SELinux не даст sshd прочитать ключ.
