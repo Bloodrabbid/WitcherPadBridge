@@ -1029,12 +1029,16 @@ static void* worker(void* unused) {
                         /* No Lua here: the cursor is the focus and the clicks are real. */
                         lmb = a;
                         rmb = g.buttonX.pressed;
-                        if (b) want[MK_ESC] = 1;
+                        /* Escape is a tap on the press, never a hold. Closing a panel with B
+                           flips the bridge out of UI mode while the button is still down, and a
+                           held Escape then fires again from the gameplay branch -- one press
+                           that shuts the panel and opens the system menu behind it. */
+                        if (b && !p_b) tap_key(MK_ESC);
                     } else {
                         lmb = a;                                 /* attack / interact  */
                         rmb = g.buttonX.pressed;                 /* cast active sign   */
                         if (g.buttonY.pressed) want[MK_I]   = 1; /* inventory          */
-                        if (b)                 want[MK_ESC] = 1; /* cancel / back      */
+                        if (b && !p_b)         tap_key(MK_ESC);  /* cancel / back      */
                         if (rb) want[MK_E] = 1;                  /* silver sword       */
                         if (lt && g_pause_claim != PAUSE_BTN_LT) want[MK_X] = 1;  /* fast style   */
                         if (rt && g_pause_claim != PAUSE_BTN_RT) want[MK_Z] = 1;  /* strong style */
@@ -1158,7 +1162,13 @@ static void* worker(void* unused) {
 
                 /* menu / system. Whichever button active pause has taken keeps its own job only
                    if pause did not claim it -- B already sends Escape, so Menu is expendable. */
-                if (g.buttonMenu.pressed    && g_pause_claim != PAUSE_BTN_MENU) want[MK_ESC] = 1;
+                {   /* same trap the other way round: Menu opens the panel, the mode turns
+                       to ui, and a held Escape would close it again on the next tick. */
+                    static int p_menu = 0;
+                    int mn = g.buttonMenu.pressed;
+                    if (mn && !p_menu && g_pause_claim != PAUSE_BTN_MENU) tap_key(MK_ESC);
+                    p_menu = mn;
+                }
                 if (g.buttonOptions.pressed && g_pause_claim != PAUSE_BTN_BACK) want[MK_F5]  = 1;
 
                 if ((tick % 250) == 0) {

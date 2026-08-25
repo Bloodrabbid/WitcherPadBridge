@@ -438,7 +438,7 @@ static DWORD WINAPI worker(LPVOID unused) {
     BYTE want[256];
     double acc_x = 0, acc_y = 0;
     DWORD prev_ms = GetTickCount();
-    int p_a = 0, p_b = 0, p_y = 0, p_lb = 0, p_rb = 0, p_lt = 0, p_rt = 0;
+    int p_a = 0, p_b = 0, p_y = 0, p_lb = 0, p_rb = 0, p_lt = 0, p_rt = 0, p_start = 0;
     int prev_nav_x = 0, prev_nav_y = 0;
     double nav_hold = 0, nav_next = 0;
     int held_l = 0, held_r = 0;
@@ -648,12 +648,16 @@ static DWORD WINAPI worker(LPVOID unused) {
         } else if (in_menu) {
             lmb = a;
             rmb = (g->wButtons & PAD_X) != 0;
-            if (b) want[SC_ESC] = 1;
+            /* Escape is a tap on the press, never a hold. Closing a panel with B flips the
+               bridge out of UI mode while the button is still down, and a held Escape then
+               fires again from the gameplay branch -- one press that shuts the panel and
+               opens the system menu behind it. */
+            if (b && !p_b) tap_key(SC_ESC);
         } else {
             lmb = a;
             rmb = (g->wButtons & PAD_X) != 0;
             if (y)  want[SC_I]   = 1;
-            if (b)  want[SC_ESC] = 1;
+            if (b && !p_b) tap_key(SC_ESC);
             if (rb) want[SC_E] = 1;
             if (lt && pause_btn != PAUSE_BTN_LT) want[SC_X] = 1;
             if (rt && pause_btn != PAUSE_BTN_RT) want[SC_Z] = 1;
@@ -691,7 +695,11 @@ static DWORD WINAPI worker(LPVOID unused) {
                 g_wheel_sect = -1;
             }
         }
-        if ((g->wButtons & PAD_START) && pause_btn != PAUSE_BTN_MENU) want[SC_ESC] = 1;
+        {
+            int st = (g->wButtons & PAD_START) != 0;
+            if (st && !p_start && pause_btn != PAUSE_BTN_MENU) tap_key(SC_ESC);
+            p_start = st;
+        }
         if ((g->wButtons & PAD_BACK)  && pause_btn != PAUSE_BTN_BACK) want[SC_F5]  = 1;
 
         /* Aim assist: spend the residual Lua published, but only while the player is asking to
