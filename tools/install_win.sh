@@ -77,6 +77,76 @@ say "== мост =="
 mkdir -p "$SYS/lightfx/wxp"
 cp "$DLL" "$SYS/lightfx/wxp/LightFX.dll"
 
+# --- Proton: назвать игре ту версию Windows, которую она знает ---------------------------------
+#
+# Игра сама строит путь `lightfx\<версия Windows>\LightFX.dll`, а версию берёт из списка, который
+# знал SDK AlienFX в 2007 году. Для всего остального она печатает "Not supported version of
+# Windows!" и до построения пути НЕ ДОХОДИТ вовсе. Префикс Proton представляется десяткой, значит
+# без этой правки мост не загрузится никогда -- и выглядеть это будет как "мод молча не работает".
+# Правка точечная: только для witcher.exe, остальной префикс остаётся десяткой.
+find_prefix() {
+  local p
+  for p in \
+      "$(dirname "$(dirname "$GAME")")/compatdata/20900/pfx" \
+      "$HOME/.steam/steam/steamapps/compatdata/20900/pfx" \
+      "$HOME/.local/share/Steam/steamapps/compatdata/20900/pfx" \
+      "$HOME/.var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/compatdata/20900/pfx"; do
+    [ -f "$p/user.reg" ] && { echo "$p"; return 0; }
+  done
+  return 1
+}
+
+game_running() {
+  command -v pgrep >/dev/null 2>&1 || return 1
+  # скобка не даёт pgrep найти собственную командную строку
+  pgrep -f "[w]itcher\.exe" >/dev/null 2>&1
+}
+
+PFX="$(find_prefix || true)"
+if [ -z "$PFX" ]; then
+  say "== версия Windows для игры =="
+  say "   префикса Proton нет — пропускаю (обычная Windows или игра ещё ни разу не запускалась)"
+  say "   Если это Proton: запустите игру один раз, потом установщик ещё раз."
+  say "   Если это обычная Windows и мост не грузится — свойства witcher.exe →"
+  say "   Совместимость → режим совместимости с Windows XP (SP3)."
+elif awk '
+       tolower($0) ~ /^\[software\\\\wine\\\\appdefaults\\\\witcher\.exe\]/ { f = 1; next }
+       /^\[/ { f = 0 }
+       f && tolower($0) ~ /^"version"="winxp"/ { found = 1 }
+       END { exit !found }
+     ' "$PFX/user.reg"; then
+  say "== версия Windows для игры =="
+  say "   уже выставлена (winxp) — ничего не меняю"
+elif game_running; then
+  # wineserver переписывает user.reg своей копией при выходе, и правка потеряется молча
+  die "Игра запущена. Закройте её полностью и запустите установщик ещё раз:
+     иначе Wine перезапишет user.reg при выходе и правка версии Windows пропадёт."
+else
+  say "== версия Windows для игры =="
+  cp "$PFX/user.reg" "$BACKUP/user.reg" 2>/dev/null || true
+  awk -v ts="$(date +%s)" '
+    BEGIN { inblk = 0; done = 0 }
+    tolower($0) ~ /^\[software\\\\wine\\\\appdefaults\\\\witcher\.exe\]/ {
+      inblk = 1; pend = 1; done = 1; print; next
+    }
+    inblk && /^#/ { print; next }                   # #time= относится к заголовку, не разлучаем
+    inblk && pend { print "\"Version\"=\"winxp\""; pend = 0 }
+    inblk && /^\[/ { inblk = 0 }
+    inblk && tolower($0) ~ /^"version"=/ { next }   # свою строку версии уже напечатали выше
+    { print }
+    END {
+      if (pend) print "\"Version\"=\"winxp\""
+      if (!done) {
+        print ""
+        print "[Software\\\\Wine\\\\AppDefaults\\\\witcher.exe] " ts
+        print "\"Version\"=\"winxp\""
+      }
+    }
+  ' "$PFX/user.reg" > "$PFX/user.reg.wxp" && mv "$PFX/user.reg.wxp" "$PFX/user.reg"
+  say "   winxp прописан в $PFX/user.reg"
+  note "   (бэкап: $BACKUP/user.reg)"
+fi
+
 say "== Lua-слой =="
 n=0
 for f in "$ROOT"/mod/scripts/*.luc; do

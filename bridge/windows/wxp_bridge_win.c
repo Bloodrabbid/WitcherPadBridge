@@ -118,7 +118,7 @@ static const char* const PAUSE_BTN_NAMES[] = { "touchpad", "menu", "back",
 
 /* One initialiser, used twice: the live config and the copy to fall back on. */
 #define WXP_CFG_DEFAULTS { 1, 0.20f, 0.16f, 1.7f, 1400.f, 900.f, 700.f, 0, \
-                           1, AIM_BTN_R3, 2200.f, 1, PAUSE_BTN_TOUCHPAD, 0.70f, 1, 100.f }
+                           1, AIM_BTN_R3, 2200.f, 1, PAUSE_BTN_TOUCHPAD, 0.85f, 1, 100.f }
 static const Cfg g_cfg_defaults = WXP_CFG_DEFAULTS;
 static Cfg       g_cfg          = WXP_CFG_DEFAULTS;
 

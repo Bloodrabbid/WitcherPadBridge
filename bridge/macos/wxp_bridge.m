@@ -337,7 +337,7 @@ static const char* const PAUSE_BTN_NAMES[] = { "touchpad", "menu", "back",
 #define WXP_CFG_DEFAULTS { .dz_l=0.20f, .dz_r=0.18f, .sens_x=1400.f, .sens_y=900.f, \
                            .menu_sens=700.f, .curve=1.7f, .invert_y=0, .enabled=1, \
                            .aim=1, .aim_btn=AIM_BTN_R3, .pause_btn=PAUSE_BTN_TOUCHPAD, \
-                           .aim_speed=2200.f, .rumble=1, .rumble_strength=100.f, .run_threshold=0.70f }
+                           .aim_speed=2200.f, .rumble=1, .rumble_strength=100.f, .run_threshold=0.85f }
 static const Cfg g_cfg_defaults = WXP_CFG_DEFAULTS;
 static Cfg       g_cfg          = WXP_CFG_DEFAULTS;
 static char g_cfg_path[1024];      /* gamepad.ini in the write dir, edited by hand */

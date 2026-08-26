@@ -62,16 +62,46 @@ Steam или по иконке. Инжектор и переменные окр�
 
 1. Бэкап штатного `<игра>/System/Scripts/debug.luc` — мод его заменяет.
 2. `LightFX.dll` → `<игра>/System/lightfx/wxp/LightFX.dll`
-3. `mod/scripts/*.luc` → `<игра>/System/Scripts/`
-4. `mod/gamepad.ini` → `<игра>/gamepad.ini`
+3. **Только Proton:** в префикс игры прописывается версия Windows для `witcher.exe` (см. ниже).
+4. `mod/scripts/*.luc` → `<игра>/System/Scripts/`
+5. `mod/gamepad.ini` → `<игра>/gamepad.ini`
 
 Игра сама пытается загрузить `LightFX.dll` при каждом старте, поэтому ни инжектора, ни
-изменения бинаря здесь не нужно. Те же четыре шага легко сделать руками, если установщик
+изменения бинаря здесь не нужно. Те же шаги легко сделать руками, если установщик
 почему-то не подошёл.
 
-Из трёх скриптов два новые (`wxp_gamepad.luc`, `wxp_ui.luc`), а `debug.luc` — штатный файл игры
-с одной добавленной строкой: это единственный скрипт, который движок грузит безусловно, поэтому
-он и служит точкой входа мода. Удаление = вернуть сохранённую копию и убрать остальные файлы.
+#### Версия Windows — без неё под Proton не работает ничего
+
+Игра строит путь как `lightfx\<версия Windows>\LightFX.dll`, а версию сверяет со списком,
+который знал SDK AlienFX в 2007 году. Всё, чего в списке нет, даёт `Not supported version of
+Windows!` — и до построения пути игра **не доходит вовсе**, то есть мост не загружается.
+Префикс Proton представляется десяткой, поэтому правка обязательна.
+
+Установщик делает её сам, точечно — только для `witcher.exe`, остальной префикс остаётся
+десяткой. Руками это выглядит так, в
+`~/.local/share/Steam/steamapps/compatdata/20900/pfx/user.reg`:
+
+```
+[Software\\Wine\\AppDefaults\\witcher.exe] 0
+"Version"="winxp"
+```
+
+**Игра при этом должна быть закрыта:** wineserver при выходе перезаписывает `user.reg` своей
+копией, и правка молча пропадёт. То же самое можно сделать через `protontricks 20900 winecfg`
+→ вкладка «Приложения» → добавить `witcher.exe` → Windows XP.
+
+Проверить, что получилось, можно по логу моста `<игра>/System/wxp_bridge.log`: строка
+`reported ver: 5.1 build 2600`. Если лога нет вообще — версия не подхватилась.
+
+На обычной Windows этой правки установщик не делает. Если там мост не грузится по той же
+причине — свойства `witcher.exe` → Совместимость → режим совместимости с Windows XP (SP3).
+Проверить это было не на чем: у нас нет машины с обычной Windows.
+
+Все скрипты, кроме одного, — новые файлы мода (`wxp_gamepad`, `wxp_ui`, `wxp_settings`,
+`wxp_combat`, `wxp_signwheel`, `wxp_rumble`). Единственный штатный файл игры среди них —
+`debug.luc`, и в него добавлена ровно одна строка: это единственный скрипт, который движок
+грузит безусловно, поэтому он и служит точкой входа мода. Удаление = вернуть сохранённую копию
+и убрать остальные файлы.
 
 В Steam **выключите Steam Input** для этой игры (Свойства → Контроллер → «Отключить Steam Input»)
 или переведите его в passthrough: мод читает пад напрямую через XInput, а Steam Input перехватил
@@ -98,7 +128,7 @@ AimSpeed         = 2200   ; как быстро доворачивается к�
 
 PauseButton      = touchpad  ; активная пауза: touchpad menu back l3 r3 lt rt none
 
-RunThreshold     = 0.70   ; слабее — шаг, сильнее — бег; 0 = всегда бег
+RunThreshold     = 0.85   ; слабее — шаг, сильнее — бег; 0 = всегда бег
 Rumble           = 1      ; вибрация
 RumbleStrength   = 100    ; сила в процентах: 0 — тишина, 150 — сильнее
 LogLevel         = 1      ; 0 тишина · 1 обычный лог · 2 подробный
@@ -142,9 +172,16 @@ DualSense/DualShock: это единственная свободная кноп
 Двумя скоростями всё и ограничивается: сделать их плавно-переменными, как в новых играх, нельзя.
 Рантайм-сеттера скорости движок в Lua не отдаёт (есть только «всегда бежать» вкл/выкл), а
 локомоторных анимаций ровно две, без смешивания, — промежуточный темп означал бы едущие по земле
-ноги. Разрыв между шагом и бегом тоже фиксирован: он задан анимациями, а не таблицей.
+ноги.
 
-Порог — `RunThreshold`, доля отклонения стика (0.70 = семь десятых хода). `0` возвращает старое
+А вот сами эти две скорости заданы не анимациями, а таблицей `moverates.2da` (строка
+`chr_geralt`, отдельные колонки `walk` и `run`), и её можно перекрыть своим файлом в
+`Data/2DA/`. Мод этого не делает: зависимость там резко нелинейная — небольшая прибавка к `walk`
+почти сразу подтягивает шаг к скорости бега. Если хочется поэкспериментировать, это делается
+независимо от мода, как и любой другой мод на скорость.
+
+Порог — `RunThreshold`, доля отклонения стика (0.85 = восемь с половиной десятых хода, то есть
+шагом Геральт идёт почти на всём ходу стика, а бежит у самого упора). `0` возвращает старое
 поведение «всегда бег». В игре: Настройки → Игра → «Геймпад: бег при отклонении, %».
 
 ### Крупнее текст (отдельно, по желанию)
@@ -307,7 +344,8 @@ strong styles.
 and startup.lua turns always-run on, so Geralt sprints across a room. The mod gives the second
 speed back and puts it on the stick: push a little to walk, push far to run. Measured on the live
 character, running is about four times walking. `RunThreshold` is the fraction of stick travel
-where it switches (0.70 by default); `0` restores always-run. Two speeds is all there is: the
+where it switches (0.85 by default, so walking covers almost the whole throw and running sits at
+the very end); `0` restores always-run. Two speeds is all there is: the
 engine exposes no runtime speed setter to Lua, only always-run on or off, and there are exactly
 two locomotion animations with no blending between them -- an in-between pace would slide Geralt's
 feet along the ground. The gap between the two is set by those animations, not by a table.
