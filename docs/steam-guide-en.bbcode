@@ -1,0 +1,251 @@
+[h1]Why this exists[/h1]
+The Witcher shipped in 2007 and knows nothing about gamepads. Its control settings offer keyboard
+and mouse only, and the engine's built-in joystick path understands two buttons and two axes —
+you cannot play on that. The usual workaround is to map a controller to the keyboard through
+Steam Input, which gives you digital movement (eight directions, nothing in between), a camera
+that turns in steps, and menus you have to drag a cursor around.
+
+[b]WitcherPadBridge[/b] takes a different route: it runs inside the game's process and talks to
+the engine directly. That is where the analogue movement and camera come from, and the focus ring
+in menus instead of a cursor, and the rumble (the game itself does not contain a single vibration
+call), and the aim assist in combat.
+
+[list]
+[*][b]Analogue movement[/b] — Geralt goes where you point the stick, not into one of eight lanes.
+[*][b]Walk and run on the same stick[/b] — tilt a little to walk, push far to run. The game has no
+walk key at all: it force-enables always-run, so Geralt sprints across a room. The mod gives the
+second speed back.
+[*][b]Menus, inventory, journal, map, dialogue, settings[/b] — focus moves between elements the
+way a modern game does. No cursor dragging.
+[*][b]Sign wheel[/b] — hold LB and tilt the right stick.
+[*][b]Rumble[/b] — hits landed, damage taken, the rhythm of an attack chain, signs, the medallion.
+[*][b]Aim assist[/b] — in this game a swing lands on whoever is under the crosshair, so the mod
+turns the camera for you, but only while you ask it to.
+[*][b]Active pause[/b] on a button — half the tactics in a fight.
+[*][b]A settings tab inside the game[/b] — Options → Gameplay, "Gamepad" block at the bottom.
+[/list]
+
+There is nothing separate to launch: install it and start the game from Steam as usual.
+The mod is open source — [url=https://github.com/Bloodrabbid/WitcherPadBridge]sources and builds
+on GitHub[/url].
+
+[hr][/hr]
+[h1]What you need[/h1]
+[list]
+[*][b]The Witcher: Enhanced Edition[/b] (the first game, not Witcher 2 or 3).
+[*]Any controller the system exposes as Xbox-compatible: the Steam Deck's own, ROG Ally,
+DualSense/DualShock, Xbox, third-party pads.
+[*]On Steam Deck and ROG Ally — a couple of minutes in [b]desktop mode[/b] to run the installer.
+[/list]
+
+Grab the archive from the
+[url=https://github.com/Bloodrabbid/WitcherPadBridge/releases]releases page[/url] and unpack it.
+Then pick your platform below.
+
+[hr][/hr]
+[h1]Steam Deck / ROG Ally / Bazzite (Proton)[/h1]
+[olist]
+[*][b]Close the game completely.[/b] This matters — the reason is right below.
+[*]Switch to desktop mode.
+[*]Open Konsole (or any terminal) and run the command that follows.
+[/olist]
+
+[code]bash ~/Downloads/WitcherPadBridge-0.6/tools/install_win.sh[/code]
+
+Adjust the path to wherever you unpacked it. The installer finds the game folder itself through
+your Steam libraries, including one on an SD card. If it does not, pass the folder as an argument:
+
+[code]bash ~/Downloads/WitcherPadBridge-0.6/tools/install_win.sh "/path/to/The Witcher Enhanced Edition"[/code]
+
+[h2]Why the game must be closed, and what gets written to the prefix[/h2]
+This is the one place worth understanding, because otherwise the mod quietly does nothing and
+there is nothing obvious to grab onto.
+
+On every start, the game tries to load a DLL from
+[code]lightfx\<Windows version>\LightFX.dll[/code] — a leftover from the AlienFX lighting SDK, and
+the very hook this mod uses, with no injector and no patched executable. But it builds that folder
+name from a list of Windows versions that existed in 2007. A Proton prefix reports Windows 10, the
+game does not recognise it, writes [i]Not supported version of Windows![/i] to its own log and
+[b]never gets as far as building the path[/b]. The bridge is never loaded, and what you see is
+"I installed it and nothing changed".
+
+So the installer writes one line into the game's prefix: [code]witcher.exe → Windows XP[/code].
+Per-executable only — the rest of the prefix stays on Windows 10. The registry is backed up to
+[code]<game>/WitcherPadBridge/backup[/code] first.
+
+And the game has to be closed because Wine rewrites the registry file from memory when it exits:
+an edit made while the game is running gets silently overwritten. The installer checks for this
+and refuses to run rather than leave you with a broken install.
+
+The manual equivalent, if you prefer:
+[code]protontricks 20900 winecfg[/code]
+→ Applications tab → Add application → [b]witcher.exe[/b] → Windows version [b]XP[/b].
+
+[hr][/hr]
+[h1]Windows[/h1]
+Double-click [code]tools\install_windows.bat[/code]. It does not touch the Windows version — if
+the bridge fails to load for the same reason as above, open the properties of
+[code]witcher.exe[/code] → Compatibility → run in compatibility mode for [b]Windows XP (SP3)[/b].
+
+[i]Straight up: I do not own a machine running plain Windows. The Windows half is verified under
+Wine and Proton, including a live run on a ROG Ally, but not on real Windows 10 or 11. If you try
+it, please say how it went in the comments.[/i]
+
+[hr][/hr]
+[h1]macOS[/h1]
+[code]bash tools/install_mac.sh[/code]
+
+On macOS the game is not a Windows program: it runs through the eON port wrapper, and loading a
+Windows DLL into it is impossible in principle. So the bridge there is native, and the installer
+registers it in the game's executable and re-signs the bundle (macOS will not load an unsigned
+library otherwise). The original binary is kept in
+[code]<game>/WitcherPadBridge/backup[/code]; uninstalling puts everything back.
+
+[hr][/hr]
+[h1]Required: turn Steam Input off[/h1]
+Game properties → [b]Controller[/b] → "Disable Steam Input" (or passthrough).
+
+The Witcher has no native controller support, so Steam applies a keyboard-and-mouse template by
+default and sends the game key presses instead of the pad itself. This mod reads the pad directly
+through XInput, so Steam Input only gets in the way: the pad reads as "not connected" even though
+it plainly is.
+
+[hr][/hr]
+[h1]Controls[/h1]
+[table]
+[tr][th]Button[/th][th]In game[/th][th]In menus and panels[/th][/tr]
+[tr][td]Left stick[/td][td]movement; tilt a little to walk, push far to run[/td][td]move focus[/td][/tr]
+[tr][td]Right stick[/td][td]camera[/td][td]cursor (main menu only)[/td][/tr]
+[tr][td]A[/td][td]attack[/td][td]confirm[/td][/tr]
+[tr][td]B[/td][td]cancel[/td][td]close panel / back[/td][/tr]
+[tr][td]X[/td][td]cast active sign[/td][td]—[/td][/tr]
+[tr][td]Y[/td][td]inventory[/td][td]context action[/td][/tr]
+[tr][td]LB[/td][td]steel sword; [b]hold + right stick — sign wheel[/b][/td][td]previous tab[/td][/tr]
+[tr][td]RB[/td][td]silver sword[/td][td]next tab[/td][/tr]
+[tr][td]LT / RT[/td][td]fast / strong style[/td][td]previous / next section[/td][/tr]
+[tr][td]L3 / R3[/td][td]group style / flip camera[/td][td]—[/td][/tr]
+[tr][td]D-pad[/td][td]journal / map / character / alchemy[/td][td]move focus[/td][/tr]
+[tr][td]Touchpad[/td][td][b]active pause[/b] (pads without one use Start)[/td][td]—[/td][/tr]
+[tr][td]Start[/td][td]menu[/td][td]—[/td][/tr]
+[tr][td]Back[/td][td]quicksave[/td][td]—[/td][/tr]
+[/table]
+
+[h2]Sign wheel[/h2]
+Hold [b]LB[/b] and tilt the right stick — the sign in that sector becomes active and X casts it.
+Sectors run clockwise from "up": Aard, Quen, Yrden, Igni, Axii. Signs you do not know yet are
+greyed out. Release LB without touching the stick and it just draws the steel sword, as usual.
+
+[h2]Active pause[/h2]
+Freezes the world without covering the screen: you can look at where everyone is standing and
+switch styles. On DualSense and DualShock it sits on the touchpad click — the one free button in
+the middle. On Xbox-compatible pads (including the Deck and the Ally) the mod moves it to
+[b]Start[/b] by itself; Escape does not go anywhere, it lives on B. You can pick a different
+button in the settings.
+
+[hr][/hr]
+[h1]Settings[/h1]
+Everything is configurable [b]inside the game[/b]: Options → Gameplay, "Gamepad" block at the
+bottom of the list. Camera speed per axis, Y inversion, response curve, deadzones, aim assist and
+its speed, pause button, run threshold, rumble and its strength, tooltip timeout.
+
+The same settings live in [code]gamepad.ini[/code] in the game folder (on macOS in
+[code]~/Library/Application Support/com.cdprojektred.TheWitcher/[/code]). The file is re-read on
+the fly, so you can edit it without leaving the game.
+
+[h2]Aim assist[/h2]
+A swing in this game lands on whoever is under the crosshair, and the crosshair is the centre of
+the screen. So "aiming" here means turning the camera, and that is what the mod does — but only
+while it is asked to, and never while you are touching the right stick yourself.
+[list]
+[*][b]1 — on attack[/b] (default): turns while the attack button is held.
+[*][b]2 — on button[/b]: turns only while you hold the chosen button (R3 by default). Nothing
+moves unless you ask. That button loses its normal action in this mode.
+[*][b]0 — off[/b]: never touches the camera.
+[/list]
+If the camera feels too eager, lower the aim assist speed or switch to mode 2.
+
+[h2]Run threshold[/h2]
+How far the stick has to travel before Geralt runs. The default is 0.85, so walking covers almost
+the whole throw and running sits at the very end. Set it to [b]0[/b] for the old always-run
+behaviour.
+
+[hr][/hr]
+[h1]Things worth knowing up front[/h1]
+
+[h2]The camera has to be the follow camera[/h2]
+This is the big one. The game has three cameras, and only the [b]follow[/b] camera (over the
+shoulder) is playable with a pad: it pins the cursor to the centre of the screen, and moving it
+turns the view — which is what the entire camera control is built on. In the isometric and hybrid
+cameras the cursor is free and you point it at the ground, so the right stick honestly works as a
+pointer there, not as a camera.
+
+If the right stick moves a mouse pointer instead of turning the camera after you load a save,
+switch cameras with [b]F3[/b] on the keyboard (F1 isometric, F2 hybrid, F3 follow) or in the game
+options. There is no pad button for switching cameras yet — it is on the list.
+
+[h2]Steam's file verification undoes the install[/h2]
+The mod replaces one of the game's own scripts (with exactly one line added — it is the only
+script the engine loads unconditionally, which is why it serves as the entry point). Verifying the
+game files puts the stock copy back. Just run the installer again.
+
+[h2]Bigger text — optional and separate[/h2]
+On the small screens of the Deck and the Ally the text is on the small side. The archive ships a
+separate, reversible tweak: [code]bash tools/bigger_text.sh on[/code] (and [code]off[/code] to
+revert). It swaps the font table for larger sizes [i]that the game already contains[/i] — the game
+does not rasterise fonts at runtime, so arbitrary sizes are not available.
+
+This is not "UI scale": the engine has no such thing, its panels are laid out rigidly. What the
+mod does instead is enlarge whatever element has focus, and show long names in a tooltip.
+
+[h2]Not finished yet[/h2]
+[list]
+[*]Dice poker is implemented but never tested against a live opponent.
+[*]You cannot rebind keys from the pad on the Controls screen: it binds keyboard keys, and a pad
+has no letters. Walking the list and clearing bindings does work.
+[*]No pad button for switching cameras yet (see above).
+[/list]
+
+[hr][/hr]
+[h1]If it does not work[/h1]
+The mod logs generously, and the logs usually say exactly which step failed.
+
+[list]
+[*][b]Bridge log[/b]: [code]<game>/System/wxp_bridge.log[/code] (on macOS
+[code]/tmp/wxp_bridge.log[/code]).
+[*][b]Script log[/b]: [code]<game>/System/wxp_gamepad.log[/code].
+[*][b]Install transcript[/b]: [code]<game>/WitcherPadBridge/install.log[/code].
+[/list]
+
+[b]No bridge log at all[/b] — the game never loaded it. On Proton this is almost always the
+Windows version: run the installer again with the game [b]fully closed[/b]. When it is right, the
+log contains [code]reported ver: 5.1 build 2600[/code].
+
+[b]Log exists but no pad[/b] — you will see [code]pad: no controller on any XInput slot[/code].
+That is Steam Input; turn it off in the game's properties.
+
+[b]Pad is seen but the game ignores it[/b] — check the [code]lua=[/code] field in the log. If it
+says [code]absent[/code], the script half is not installed (or Steam's verification removed it) —
+reinstall.
+
+For a bug report the archive includes a collector: [code]bash tools/diagnose.sh[/code]. It drops a
+folder and an archive with all logs and configs next to itself and [b]sends nothing
+anywhere[/b] — attach that.
+
+[hr][/hr]
+[h1]Uninstalling[/h1]
+[table]
+[tr][th]Platform[/th][th]Command[/th][/tr]
+[tr][td]Steam Deck / ROG Ally / Bazzite[/td][td][code]bash tools/uninstall_win.sh[/code][/td][/tr]
+[tr][td]Windows[/td][td][code]tools\uninstall_windows.bat[/code][/td][/tr]
+[tr][td]macOS[/td][td][code]bash tools/uninstall_mac.sh[/code][/td][/tr]
+[/table]
+
+It restores the stock script from the backup, removes the mod's files and takes the Windows
+version override back out of the prefix. The game has to be closed for this one too.
+
+[hr][/hr]
+[h1]Questions and bug reports[/h1]
+Comments here, or open an issue on
+[url=https://github.com/Bloodrabbid/WitcherPadBridge/issues]GitHub[/url]. The sources are open,
+and so is a detailed engineering journal — how all of this actually works and why it was done this
+way rather than another.
