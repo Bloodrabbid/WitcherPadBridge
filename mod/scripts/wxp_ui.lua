@@ -227,7 +227,29 @@ local function tip_secs()
 end
 
 -- Зовётся с каждого heartbeat, пока открыта панель.
+-- The focus ring is a SNAPSHOT of a panel, and the engine does not fill a panel in the frame it
+-- opens it. On a live save the inventory reports its 71 occupied cells only after the snapshot
+-- was taken, so the bag and the quest items never enter the ring at all -- and the ring is only
+-- rebuilt when focus is lost, which never happens because the equipment slot it landed on is
+-- still there. The result is the most-used panel in the game missing everything the player
+-- actually came for. One deferred rebuild after the panel changes closes the race; refresh()
+-- restores focus by object identity, so nothing jumps under the player.
+local REBUILD_DELAY = 0.4
+
+local function tick_rebuild()
+  if U.panel == U.rebuilt_for then return end
+  if U.rebuild_at == nil then
+    U.rebuild_at = os.clock() + REBUILD_DELAY
+    return
+  end
+  if os.clock() < U.rebuild_at then return end
+  U.rebuilt_for = U.panel
+  U.rebuild_at = nil
+  pcall(function() U.refresh() end)
+end
+
 function U.tick()
+  pcall(tick_rebuild)
   if U.tip_at == nil then return end
   local secs = tip_secs()
   if secs <= 0 then return end
@@ -1074,8 +1096,13 @@ function U.refresh()
   local name, obj = open_panel()
   local prev_names = {}
   for i = 1, table.getn(U.sections) do prev_names[U.sections[i].name] = true end
+  local prev_panel = U.panel
   U.sections = {}
   U.panel = name or "-"
+  -- Re-arm the deferred rebuild whenever the screen actually changes. U.tick only runs outside
+  -- the world, so the marker would otherwise still name the last panel and a second visit to
+  -- the same screen -- closing the inventory and opening it again -- would keep the stale ring.
+  if U.panel ~= prev_panel then U.rebuilt_for, U.rebuild_at = nil, nil end
   if obj == nil then
     highlight(U.focus_entry, false)
     U.focus, U.focus_entry, U.si = nil, nil, 0
